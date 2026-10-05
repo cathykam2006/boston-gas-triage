@@ -4,7 +4,7 @@
 
 Created by **Cathy Kam** · Built entirely from public data
 
-🔗 **Live app:** [add your Streamlit link here](https://share.streamlit.io)
+🔗 **Live app:** [Open the interactive app](https://boston-gas-triage.streamlit.app)
 
 ---
 

@@ -1,0 +1,18 @@
+{
+  "risk_source": "Provisional: building-age score calibrated to DPU's Boston Gas leak-prone share",
+  "cost_per_mile_usd": 3060503.5700864336,
+  "cost_year": 2024,
+  "ratepayer_multiplier": 1.0,
+  "ratepayer_multiplier_source": "not available (capital cost used)",
+  "hp_cost_per_unit_usd": 22000,
+  "annual_budget_usd": 100000000.0,
+  "flagged_miles": 350.72658612502084,
+  "electrify_miles": 34.679675352758075,
+  "electrify_units": 2787.0,
+  "all_replace_capital_usd": 1073399968.9598533,
+  "mixed_capital_usd": 1028576698.7332988,
+  "all_replace_ratepayer_usd": 1073399968.9598533,
+  "mixed_ratepayer_usd": 1028576698.7332988,
+  "years_to_finish": 11,
+  "ej_share_of_electrified_miles": 0.7774966946840889
+}

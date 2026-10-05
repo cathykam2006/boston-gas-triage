@@ -34,7 +34,7 @@ In 2025, DPU cut the program's spending cap and directed utilities to consider c
 3. **Few of Boston's oldest streets fall below it.** Only **35 of the 351 miles** (about 2,800 homes) are cheaper to electrify. Most of the oldest streets are dense triple-decker and rental neighborhoods with about 19 homes per 100 m, so a mixed plan saves only about **4%** over replacing everything.
 4. **78% of the streets where electrification wins are in environmental-justice neighborhoods**, so any program there needs income-qualified support and protections for renters.
 5. **Large-building gas use is highly concentrated.** Among 5,580 large buildings reporting to the city, the top 10% use **73%** of the gas, and multifamily housing is the biggest user.
-6. **For dense streets, the realistic alternative to new pipe is a shared system**, such as networked geothermal, where one loop serves many homes. This matches National Grid's decision to keep its Franklin Field geothermal pilot in Dorchester, which serves multifamily public housing.
+6. **For dense streets, the realistic alternative to new pipe is a shared system**, such as networked geothermal, where one loop serves many homes. This matches National Grid's decision to keep its Franklin Field geothermal pilot in Dorchester, which serves multifamily public housing. But right now, since it is a pilot, we have very little useful data points to evaluate its practicality. 
 
 ![Triage plan](figures/14_triage_plan.png)
 

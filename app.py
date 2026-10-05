@@ -1,277 +1,350 @@
 """
-app.py — Streamlit app for the Massachusetts Peak Electricity Demand project.
-
-Loads pre-trained models and pre-computed data (produced by train_and_save.py)
-rather than retraining anything live, so the app stays fast.
-
-Run locally with:
-    streamlit run app.py
+Repair, Replace, or Retire? Boston gas pipe triage
+Part 4: Streamlit app. Run from the project folder:  streamlit run app.py
+Reads the files saved in Parts 2 and 3 (data_processed/).
 """
+import json
+import math
+import os
 
-import streamlit as st
-import pandas as pd
+import altair as alt
+import geopandas as gpd
 import numpy as np
-import joblib
-import shap
-import matplotlib.pyplot as plt
+import pandas as pd
+import pydeck as pdk
+import streamlit as st
 
-st.set_page_config(
-    page_title="MA Peak Electricity Demand Forecasting",
-    page_icon="⚡",
-    layout="wide",
-)
+st.set_page_config(page_title="Boston gas pipe triage", page_icon="🔥", layout="wide")
 
-TARGET = "Demand (MW)"
+CREATOR = "Cathy Kam"   # app creator, shown in the header, sidebar, and Methods tab
+DATA = "data_processed"
+SEG_FILE = os.path.join(DATA, "segments_scored.geojson")
+SUMMARY_FILE = os.path.join(DATA, "plan_summary.json")
+GSEP_FILE = os.path.join(DATA, "gsep_annual.csv")
 
-
-# ---------------------------------------------------------------------------
-# Cached loaders — @st.cache_data / @st.cache_resource keep these from
-# re-running on every user interaction (Streamlit re-runs the whole script
-# top to bottom on every click otherwise).
-# ---------------------------------------------------------------------------
-@st.cache_data
-def load_dataset():
-    df = pd.read_csv("data/isone_full_dataset.csv", index_col="period", parse_dates=True)
-    return df
-
-
-@st.cache_data
-def load_test_predictions():
-    return pd.read_csv("data/test_predictions.csv", index_col="period", parse_dates=True)
-
-
-@st.cache_data
-def load_comparison_table():
-    return pd.read_csv("data/model_comparison.csv", index_col=0)
+ACTION_COLORS = {
+    "Monitor (lower risk)": [205, 208, 212],
+    "Replace or repair pipe": [59, 110, 143],
+    "Electrify homes (non-pipe alternative)": [39, 174, 96],
+}
+TYPE_COLORS = {
+    "Older owner-occupied neighborhoods": [230, 126, 34],
+    "Dense old rental neighborhoods": [192, 57, 43],
+    "Through streets, few homes": [149, 165, 166],
+    "Newer low-density streets": [59, 110, 143],
+    "Large-building streets": [142, 68, 173],
+    "Heat-pump streets": [39, 174, 96],
+}
+BASEMAP = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
 
-@st.cache_resource
-def load_models():
-    xgb_model = joblib.load("models/xgb_model.pkl")
-    lgb_model = joblib.load("models/lgb_model.pkl")
-    feature_cols = joblib.load("models/feature_cols.pkl")
-    return xgb_model, lgb_model, feature_cols
+# ---------------------------------------------------------------- data
+@st.cache_data(show_spinner="Loading street data...")
+def load_data():
+    seg = gpd.read_file(SEG_FILE)
+    for c in ["likely_leak_prone", "is_ej"]:
+        seg[c] = seg[c].astype(bool)
+    if "miles" not in seg:
+        seg["miles"] = seg["length_m"] / 1609.34
+    seg["units_per_100m"] = seg["res_units"] / (seg["length_m"] / 100)
+    seg["street"] = (seg["ST_NAME"].fillna("").str.title() + " " + seg["ST_TYPE"].fillna("").str.title()).str.strip()
+    if "archetype_name" not in seg:
+        seg["archetype_name"] = "Type " + seg["archetype"].astype(int).astype(str) if "archetype" in seg else "Not available"
+
+    def paths(geom):
+        if geom is None or geom.is_empty:
+            return []
+        parts = [geom] if geom.geom_type == "LineString" else list(getattr(geom, "geoms", []))
+        return [[[round(x, 6), round(y, 6)] for x, y, *_ in p.coords] for p in parts]
+
+    seg["paths"] = seg.geometry.apply(paths)
+    df = pd.DataFrame(seg.drop(columns="geometry"))
+    df = df.explode("paths").dropna(subset=["paths"]).reset_index(drop=True)
+
+    summary = json.load(open(SUMMARY_FILE)) if os.path.exists(SUMMARY_FILE) else {}
+    gsep = pd.read_csv(GSEP_FILE).sort_values("year") if os.path.exists(GSEP_FILE) else None
+    return df, summary, gsep
 
 
-@st.cache_data
-def load_shap_values():
-    return np.load("data/shap_values_test.npy")
+def hp_lifetime_factor(life_years, horizon=60, discount=0.03):
+    """Present value of buying a heat pump now plus replacements over the pipe's horizon."""
+    n = math.ceil(horizon / life_years)
+    return sum(1 / (1 + discount) ** (k * life_years) for k in range(n))
 
 
-df_combined = load_dataset()
-test_predictions = load_test_predictions()
-comparison_df = load_comparison_table()
-xgb_model, lgb_model, feature_cols = load_models()
-shap_values_test = load_shap_values()
+def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget):
+    seg = df.drop_duplicates("seg_id").set_index("seg_id")
+    s = seg[seg["likely_leak_prone"]].copy()
+    s["replace_capital"] = s["miles"] * cost_per_mile
+    s["electrify_capital"] = s["res_units"] * hp_cost
+    if basis == "Lifetime cost to customers":
+        replace_cmp = s["replace_capital"] * mult
+        electrify_cmp = s["electrify_capital"] * hp_lifetime_factor(hp_life)
+    else:
+        replace_cmp, electrify_cmp = s["replace_capital"], s["electrify_capital"]
+
+    eligible = (s["n_large_bldgs"] == 0) & (s["res_units"] > 0)
+    s["electrify"] = eligible & (electrify_cmp < replace_cmp)
+    s["action"] = np.where(s["electrify"], "Electrify homes (non-pipe alternative)", "Replace or repair pipe")
+    s["compared_cost"] = np.where(s["electrify"], electrify_cmp, replace_cmp)
+    s["replace_compared"] = replace_cmp
+    s["capital_cost"] = np.where(s["electrify"], s["electrify_capital"], s["replace_capital"])
+
+    s["priority"] = s["risk_score"] * s["miles"] / s["capital_cost"].clip(lower=1)
+    s = s.sort_values("priority", ascending=False)
+    s["plan_year"] = (s["capital_cost"].cumsum() // budget).astype(int) + 1
+
+    actions = pd.Series("Monitor (lower risk)", index=seg.index)
+    actions.loc[s.index] = s["action"]
+    years = pd.Series(np.nan, index=seg.index)
+    years.loc[s.index] = s["plan_year"]
+
+    per_home_cmp = hp_cost * (hp_lifetime_factor(hp_life) if basis == "Lifetime cost to customers" else 1)
+    per_mile_cmp = cost_per_mile * (mult if basis == "Lifetime cost to customers" else 1)
+    stats = {
+        "flagged_miles": s["miles"].sum(),
+        "electrify_miles": s.loc[s["electrify"], "miles"].sum(),
+        "electrify_homes": s.loc[s["electrify"], "res_units"].sum(),
+        "all_replace": s["replace_compared"].sum(),
+        "mixed": s["compared_cost"].sum(),
+        "years": int(s["plan_year"].max()) if len(s) else 0,
+        "breakeven_per_100m": per_mile_cmp / per_home_cmp / 16.0934,
+        "ej_share": (s.loc[s["electrify"], "miles"] * s.loc[s["electrify"], "is_ej"]).sum()
+                    / max(s.loc[s["electrify"], "miles"].sum(), 1e-9),
+    }
+    return actions, years, s, stats
 
 
-# ---------------------------------------------------------------------------
-# Sidebar navigation
-# ---------------------------------------------------------------------------
-st.sidebar.title("⚡ Navigation")
-page = st.sidebar.radio(
-    "Go to",
-    ["Overview", "Exploratory Analysis", "Model Comparison", "Extreme Peak Explainability"],
-)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    "**Data sources:** EIA (demand, renewable generation), "
-    "Open-Meteo (weather).\n\n"
-    "Models are pre-trained offline — this app only serves saved results."
-)
+def path_layer(frame, color_col, width_col):
+    return pdk.Layer("PathLayer", frame, get_path="paths", get_color=color_col, get_width=width_col,
+                     width_units="pixels", width_min_pixels=1, pickable=True, auto_highlight=True)
 
 
-# ---------------------------------------------------------------------------
-# Page: Overview
-# ---------------------------------------------------------------------------
-if page == "Overview":
-    st.title("Predicting Peak Electricity Demand in Massachusetts")
+def boston_view():
+    return pdk.ViewState(latitude=42.315, longitude=-71.075, zoom=11.2, pitch=0)
+
+
+def money(x):
+    return f"${x / 1e9:,.2f}B" if abs(x) >= 1e9 else f"${x / 1e6:,.0f}M"
+
+
+# ---------------------------------------------------------------- page
+if not os.path.exists(SEG_FILE):
+    st.error("data_processed/segments_scored.geojson was not found. Run Part 3, Cell 4 first, "
+             "then start the app from the project folder.")
+    st.stop()
+
+df, summary, gsep = load_data()
+default_cpm = summary.get("cost_per_mile_usd", 3.06e6)
+default_mult = summary.get("ratepayer_multiplier", 1.0)
+mult_source = summary.get("ratepayer_multiplier_source", "not available")
+risk_source = summary.get("risk_source", df["risk_source"].iloc[0] if "risk_source" in df else "")
+
+st.title("Repair, replace, or retire?")
+st.markdown("Which of Boston's old gas streets should get new pipe, and which would cost less to switch to "
+            "electric heat? A street-by-street look built from public data.")
+st.caption(f"Created by **{CREATOR}**")
+
+# Program figures for the description, computed from DPU's report (gsep_annual.csv)
+if gsep is not None and len(gsep):
+    _spent = gsep["spend_musd"].sum() / 1000
+    _miles = gsep["main_miles"].sum()
+    _cpm0 = gsep["spend_musd"].iloc[0] / gsep["main_miles"].iloc[0]
+    _cpm1 = gsep["spend_musd"].iloc[-1] / gsep["main_miles"].iloc[-1]
+    _y0, _y1 = int(gsep["year"].iloc[0]), int(gsep["year"].iloc[-1])
+    program_line = (f"Between {_y0} and {_y1}, Massachusetts gas utilities spent about **${_spent:.2f} billion** "
+                    f"replacing **{_miles:,.0f} miles** of leak-prone gas mains under the Gas System Enhancement "
+                    f"Program (GSEP). Over the same period, spending per mile rose from **${_cpm0:.2f}M** to "
+                    f"**${_cpm1:.2f}M**, while the number of miles replaced each year stayed roughly flat.")
+else:
+    program_line = ("Massachusetts gas utilities have spent billions replacing leak-prone gas mains under the "
+                    "Gas System Enhancement Program (GSEP), at a cost per mile that has risen steeply.")
+
+with st.expander("About this project", expanded=True):
+    st.markdown(f"""
+{program_line} In 2025, the Department of Public Utilities cut the program's spending cap and directed utilities to
+consider cheaper repairs and non-pipe alternatives, such as electrifying the homes on a street instead of laying new pipe.
+
+**The question.** For each of Boston's roughly 17,800 street segments: how likely is it to sit on old, leak-prone pipe,
+and would it cost less to replace that pipe or to switch the homes on that street to electric heat?
+
+**How it was built.**
+1. **Data extraction and cleaning:** Boston street segments, the FY2026 property assessment, BERDO building energy
+   reports, Census housing and heating data, the state's environmental-justice map, and DPU's own reports, all
+   pulled from public sources and joined street by street.
+2. **Exploratory analysis:** building age as a proxy for pipe age, gas dependence, equity patterns, large-building
+   gas demand, and the GSEP spending and mileage record.
+3. **Modeling:** k-means clustering into six street types, a leak-prone risk score calibrated to DPU's reported
+   leak-prone share for Boston Gas, and a cost model that compares new pipe with electrification and schedules
+   work within an annual budget.
+4. **This app:** change the assumptions in the sidebar and see the plan, the map, and the costs update.
+
+**Main finding.** House-by-house electrification beats new pipe only on streets with low housing density.
+Most of Boston's oldest streets are dense triple-decker and rental blocks, so for them the realistic alternative
+to new pipe is a shared system such as networked geothermal.
+
+**Who it's for.** Regulators, utilities, city planners, and advocates weighing where pipe replacement money
+does the most good, and where alternatives deserve a closer look.
+
+*Built with public data only. Not an official DPU or utility analysis.*
+""")
+
+with st.sidebar:
+    st.header("Assumptions")
+    basis = st.radio("Compare costs by", ["Capital cost", "Lifetime cost to customers"],
+                     help="Lifetime cost adds the utility's return and financing on new pipe, and heat pump "
+                          "replacements over 60 years.")
+    hp_cost = st.slider("Heat pump cost per home ($)", 10_000, 45_000, int(summary.get("hp_cost_per_unit_usd", 22_000)),
+                        step=1_000, help="Typical whole-home air-source install is about $22,000 (Mass Save program average).")
+    budget_m = st.slider("Annual budget for Boston streets ($M)", 25, 300, int(summary.get("annual_budget_usd", 100e6) / 1e6), step=25)
+    with st.expander("Advanced"):
+        cost_per_mile = st.number_input("Pipe replacement cost per mile ($)", 1_000_000, 8_000_000,
+                                        int(default_cpm), step=100_000,
+                                        help=f"Default: {summary.get('cost_year', 'latest')} statewide actual from DPU's report.")
+        mult = st.number_input("Customer cost per $1 of pipe capital", 1.0, 4.0, float(default_mult), step=0.05,
+                               help=f"Default source: {mult_source}")
+        hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18,
+                            help="Used only for lifetime cost: replacements over a 60-year pipe life, discounted at 3%.")
+    if basis == "Lifetime cost to customers" and default_mult == 1.0:
+        st.warning("The DPU customer-cost ratio was not loaded in Part 3, so pipe lifetime cost equals capital cost. "
+                   "Set it under Advanced, or rerun Part 3, Cell 4 with the working group minutes saved.")
+    st.divider()
+    st.caption(f"Created by {CREATOR}")
+
+actions, years, plan, stats = triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget_m * 1e6)
+df["action"] = df["seg_id"].map(actions)
+df["plan_year"] = df["seg_id"].map(years)
+df["color"] = df["action"].map(ACTION_COLORS)
+df["width"] = np.where(df["action"].str.startswith("Monitor"), 1, 3)
+df["plan_year_txt"] = df["plan_year"].map(lambda y: "" if pd.isna(y) else f"Year {int(y)}")
+
+tab_overview, tab_map, tab_types, tab_methods = st.tabs(["Findings", "Triage map", "Street types", "Methods and sources"])
+
+# ---------------- Findings
+with tab_overview:
+    saved = 1 - stats["mixed"] / stats["all_replace"] if stats["all_replace"] else 0
+    c = st.columns(4)
+    c[0].metric("Likely leak-prone streets", f"{stats['flagged_miles']:,.0f} mi")
+    c[1].metric("Tipping point", f"{stats['breakeven_per_100m']:.1f} homes / 100 m",
+                help="Below this density, electrifying every home costs less than new pipe.")
+    c[2].metric("Cheaper to electrify", f"{stats['electrify_miles']:,.0f} mi",
+                f"{stats['electrify_homes']:,.0f} homes", delta_color="off")
+    c[3].metric("Saved vs replacing everything", f"{saved:.0%}")
+
+    st.subheader("What the analysis shows")
     st.markdown(
-        """
-        Using weather, load, renewable generation, and consumer behavior data to
-        forecast hourly electricity demand for ISO New England, with a focus on
-        identifying the conditions that drive **extreme peak demand** events.
-        """
+        f"- With the current assumptions, house-by-house electrification beats new pipe only on streets with fewer than "
+        f"**{stats['breakeven_per_100m']:.1f} homes per 100 m**.\n"
+        f"- Most of Boston's oldest streets are dense triple-decker and rental blocks, well above that line. "
+        f"As a result, house-by-house electrification is generally not the lower-cost option on these streets; "
+        f"across the full system, the modeled strategy saves **{saved:.0%}** compared with replacing all flagged pipe.\n"
+        f"- **{stats['ej_share']:.0%}** of the streets where electrification wins are in environmental-justice "
+        f"neighborhoods, so income-qualified support and renter protections would matter.\n"
+        f"- At **${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
+        f"- For dense streets, the realistic alternative is shared systems such as networked geothermal, "
+        f"which this version does not yet model."
     )
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Rows of hourly data", f"{len(df_combined):,}")
-    col2.metric("Date range", f"{df_combined.index.min().year}–{df_combined.index.max().year}")
-    best_model = comparison_df["MAPE"].idxmin()
-    col3.metric("Best model (by MAPE)", best_model, f"{comparison_df.loc[best_model, 'MAPE']}% MAPE")
+    if gsep is not None:
+        st.subheader("Massachusetts pipe replacement program (GSEP), statewide")
+        g = gsep.copy()
+        g["Spending per mile ($M)"] = g["spend_musd"] / g["main_miles"]
+        k = st.columns(3)
+        k[0].metric(f"Spent {int(g.year.min())}-{int(g.year.max())}", money(g["spend_musd"].sum() * 1e6))
+        k[1].metric("Miles of main replaced", f"{g['main_miles'].sum():,.0f}")
+        k[2].metric("Spending per mile", f"${g['Spending per mile ($M)'].iloc[-1]:.2f}M",
+                    f"from ${g['Spending per mile ($M)'].iloc[0]:.2f}M in {int(g.year.min())}", delta_color="inverse")
+        left, right = st.columns(2)
+        base = alt.Chart(g).encode(x=alt.X("year:O", title=None))
+        left.altair_chart(base.mark_bar(color="#c0392b").encode(
+            y=alt.Y("spend_musd:Q", title="Spending ($ millions)"),
+            tooltip=[alt.Tooltip("year:O"), alt.Tooltip("spend_musd:Q", title="$M", format=",.1f")]
+        ).properties(title="Money spent per year", height=280), width="stretch")
+        right.altair_chart(base.mark_bar(color="#3b6e8f").encode(
+            y=alt.Y("main_miles:Q", title="Miles of main"),
+            tooltip=[alt.Tooltip("year:O"), alt.Tooltip("main_miles:Q", title="Miles", format=",.1f")]
+        ).properties(title="Miles replaced per year", height=280), width="stretch")
+        st.caption("Source: DPU Report to the Legislature on Natural Gas Leaks, D.P.U. 25-GLR-01 (Dec 31, 2025). "
+                   "Spending includes mains, services, and related work, in nominal dollars.")
 
-    st.markdown("### Key Findings")
-    st.markdown(
-        """
-        - An **ensemble of XGBoost and LightGBM** achieved the best forecasting accuracy,
-          roughly an 8x improvement over a naive seasonal-average baseline.
-        - **SARIMAX**, tested separately, underperformed even the naive baseline at both
-          a 90-day and a 24-hour forecast horizon.
-        - **Extreme peak demand** clusters around 7 PM on weekdays in both winter and summer,
-          but for opposite physical reasons: winter peaks are driven by heating load on cold
-          evenings, while summer peaks are driven by cooling load on hot evenings.
-        """
-    )
+# ---------------- Triage map
+with tab_map:
+    m = st.columns(4)
+    m[0].metric("Replace or repair", f"{stats['flagged_miles'] - stats['electrify_miles']:,.0f} mi")
+    m[1].metric("Electrify homes", f"{stats['electrify_miles']:,.0f} mi")
+    m[2].metric("Replace everything", money(stats["all_replace"]))
+    m[3].metric("Mixed plan", money(stats["mixed"]), f"{-saved:.0%}", delta_color="inverse")
 
-    st.markdown("### Sample of the Combined Dataset")
-    st.dataframe(df_combined.tail(10))
+    nbhds = ["All neighborhoods"] + sorted(df["NBHD_L"].dropna().unique())
+    pick = st.selectbox("Neighborhood", nbhds)
+    view_df = df if pick == "All neighborhoods" else df[df["NBHD_L"] == pick]
 
+    st.pydeck_chart(pdk.Deck(
+        layers=[path_layer(view_df, "color", "width")], initial_view_state=boston_view(), map_style=BASEMAP,
+        tooltip={"html": "<b>{street}</b><br/>{NBHD_L}<br/>{action} {plan_year_txt}<br/>"
+                         "Homes on block: {res_units}<br/>Median building year: {med_yr_built}"}),
+        width="stretch", height=560)
+    legend = " &nbsp; ".join(f"<span style='color:rgb{tuple(c)};font-size:20px'>■</span> {a}"
+                             for a, c in ACTION_COLORS.items())
+    st.markdown(legend, unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Page: Exploratory Analysis
-# ---------------------------------------------------------------------------
-elif page == "Exploratory Analysis":
-    st.title("Exploratory Data Analysis")
+    st.subheader("Priority list")
+    table = (plan.reset_index()
+                 .assign(street=lambda d: d["street"], homes=lambda d: d["res_units"].round(0),
+                         cost=lambda d: d["capital_cost"].round(-3))
+                 [["plan_year", "street", "NBHD_L", "action", "miles", "homes", "med_yr_built", "cost", "is_ej"]]
+                 .rename(columns={"plan_year": "Year", "street": "Street", "NBHD_L": "Neighborhood",
+                                  "action": "Action", "miles": "Miles", "homes": "Homes",
+                                  "med_yr_built": "Building year", "cost": "Capital cost ($)", "is_ej": "EJ area"}))
+    if pick != "All neighborhoods":
+        table = table[table["Neighborhood"] == pick]
+    st.dataframe(table.round({"Miles": 3}), width="stretch", height=320, hide_index=True)
+    st.download_button("Download plan as CSV", table.to_csv(index=False), "boston_gas_triage_plan.csv", "text/csv")
 
-    st.subheader("Hourly Demand Over Time (with Extreme Peaks Highlighted)")
-    threshold = df_combined[TARGET].quantile(0.95)
-    peaks = df_combined[df_combined[TARGET] > threshold]
+# ---------------- Street types
+with tab_types:
+    st.markdown("Streets grouped by k-means clustering on building age, housing density, large-building gas use, "
+                "gas heat share, renter share, income, and heat pump share.")
+    tdf = df.copy()
+    tdf["tcolor"] = tdf["archetype_name"].map(TYPE_COLORS).apply(lambda c: c if isinstance(c, list) else [120, 120, 120])
+    st.pydeck_chart(pdk.Deck(
+        layers=[pdk.Layer("PathLayer", tdf, get_path="paths", get_color="tcolor", get_width=2,
+                          width_units="pixels", pickable=True)],
+        initial_view_state=boston_view(), map_style=BASEMAP,
+        tooltip={"html": "<b>{street}</b><br/>{archetype_name}"}), width="stretch", height=500)
+    one = df.drop_duplicates("seg_id")
+    prof = (one.groupby("archetype_name")
+               .agg(Miles=("miles", "sum"), **{"Building year": ("med_yr_built", "median")},
+                    **{"Homes per 100 m": ("units_per_100m", "median")},
+                    **{"Likely leak-prone": ("likely_leak_prone", "mean")}, **{"EJ share": ("is_ej", "mean")})
+               .sort_values("Miles", ascending=False))
+    st.dataframe(prof.style.format({"Miles": "{:,.0f}", "Building year": "{:.0f}", "Homes per 100 m": "{:.1f}",
+                                    "Likely leak-prone": "{:.0%}", "EJ share": "{:.0%}"}), width="stretch")
 
-    fig, ax = plt.subplots(figsize=(14, 5))
-    ax.plot(df_combined.index, df_combined[TARGET], color="steelblue", linewidth=0.5, label="Hourly Demand")
-    ax.scatter(peaks.index, peaks[TARGET], color="red", s=6, label=f"Top 5% Peak Hours (>{threshold:.0f} MW)")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Demand (MW)")
-    ax.legend()
-    st.pyplot(fig)
+# ---------------- Methods and sources
+with tab_methods:
+    st.markdown(f"""
+**Risk score.** {risk_source}. Older streets are more likely to have cast-iron or unprotected steel mains;
+the share of street miles flagged matches the leak-prone share of Boston Gas's mains reported by DPU.
+When leak records are added, a gradient-boosting model replaces this score and is tested on a held-out year.
 
-    col1, col2 = st.columns(2)
+**Cost comparison.** For each flagged street: new pipe = miles × cost per mile; electrification = homes × heat pump cost.
+Streets with large BERDO-reporting buildings, or no homes, are not considered for electrification.
+The schedule ranks streets by risk-weighted miles per dollar and fills each year's budget.
 
-    with col1:
-        st.subheader("Weekday vs. Weekend Demand")
-        fig, ax = plt.subplots(figsize=(7, 5))
-        for is_weekend, label in [(0, "Weekday"), (1, "Weekend")]:
-            subset = df_combined[df_combined["is_weekend"] == is_weekend]
-            hourly = subset.groupby("hour")[TARGET].mean()
-            ax.plot(hourly.index, hourly.values, marker="o", label=label)
-        ax.set_xlabel("Hour of Day")
-        ax.set_ylabel("Average Demand (MW)")
-        ax.legend()
-        ax.grid(alpha=0.3)
-        st.pyplot(fig)
+**Data sources**
+- DPU, Report to the Legislature on the Prevalence of Natural Gas Leaks, D.P.U. 25-GLR-01 (Dec 31, 2025): GSEP spending,
+  miles replaced, leak counts, Boston Gas leak-prone share.
+- DPU GSEP Working Group minutes (Oct 20, 2023): customer cost per $1 of GSEP capital. Status: {mult_source}.
+- City of Boston open data: street segments (SAM), FY2026 property assessment, BERDO building energy reporting.
+- U.S. Census Bureau: ACS 5-year estimates (summary file) and block group boundaries.
+- MassGIS: 2020 Environmental Justice populations.
 
-    with col2:
-        st.subheader("Demand vs. Temperature")
-        fig, ax = plt.subplots(figsize=(7, 5))
-        ax.scatter(df_combined["Temperature (°C)"], df_combined[TARGET], alpha=0.08, s=4)
-        ax.set_xlabel("Temperature (°C)")
-        ax.set_ylabel("Demand (MW)")
-        ax.grid(alpha=0.3)
-        st.pyplot(fig)
+**Limits**
+- The risk score is provisional until leak records are added.
+- Statewide cost per mile; Boston's urban streets may cost more.
+- Removing gas from one street can affect neighboring streets; the network is not modeled.
+- Heat pump cost and annual budget are assumptions you can change in the sidebar.
 
-    st.subheader("Monthly Demand Distribution")
-    month_selection = st.multiselect(
-        "Filter by month (optional)",
-        options=list(range(1, 13)),
-        default=list(range(1, 13)),
-    )
-    filtered = df_combined[df_combined["month"].isin(month_selection)]
-    fig, ax = plt.subplots(figsize=(12, 5))
-    filtered.boxplot(column=TARGET, by="month", ax=ax)
-    ax.set_xlabel("Month")
-    ax.set_ylabel("Demand (MW)")
-    plt.suptitle("")
-    ax.set_title("")
-    st.pyplot(fig)
-
-
-# ---------------------------------------------------------------------------
-# Page: Model Comparison
-# ---------------------------------------------------------------------------
-elif page == "Model Comparison":
-    st.title("Model Comparison")
-
-    st.dataframe(
-        comparison_df.style.highlight_min(subset=["MAE", "RMSE", "MAPE"], color="lightgreen")
-    )
-
-    st.subheader("MAPE by Model")
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(comparison_df.index, comparison_df["MAPE"], color="steelblue")
-    ax.set_ylabel("MAPE (%)")
-    plt.xticks(rotation=20)
-    st.pyplot(fig)
-
-    st.subheader("Actual vs. Predicted (Test Period)")
-    model_choice = st.selectbox(
-        "Choose a model to plot",
-        ["ensemble_pred", "xgb_pred", "lgb_pred", "baseline_pred"],
-        format_func=lambda x: x.replace("_pred", "").upper(),
-    )
-    fig, ax = plt.subplots(figsize=(14, 5))
-    ax.plot(test_predictions.index, test_predictions[TARGET], label="Actual", color="black", linewidth=1)
-    ax.plot(test_predictions.index, test_predictions[model_choice], label="Predicted", color="orange", linewidth=1, alpha=0.8)
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Demand (MW)")
-    ax.legend()
-    st.pyplot(fig)
-
-    st.subheader("XGBoost Feature Importance")
-    importances = pd.Series(xgb_model.feature_importances_, index=feature_cols).sort_values()
-    fig, ax = plt.subplots(figsize=(8, 6))
-    importances.plot(kind="barh", ax=ax, color="steelblue")
-    ax.set_xlabel("Importance")
-    st.pyplot(fig)
-
-
-# ---------------------------------------------------------------------------
-# Page: Extreme Peak Explainability
-# ---------------------------------------------------------------------------
-elif page == "Extreme Peak Explainability":
-    st.title("What Drives Extreme Peak Demand?")
-
-    st.markdown(
-        """
-        SHAP analysis on the top 5% highest-demand hours in the test set, showing which
-        conditions the model associates most strongly with extreme demand.
-        """
-    )
-
-    st.subheader("SHAP Summary — All Test Hours")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    shap.summary_plot(shap_values_test, test_predictions[feature_cols], show=False)
-    st.pyplot(plt.gcf())
-    plt.clf()
-
-    st.subheader("Winter vs. Summer: Extreme Peak Conditions")
-    categories = ["Avg Temp (°C)", "Avg Heating\nDegree", "Avg Cooling\nDegree", "% Weekend"]
-    winter_peak_vals = [0.63, 17.41, 0.04, 4.6]
-    winter_all_vals = [7.26, 10.92, 0.18, 28.7]
-    summer_peak_vals = [27.94, 0.0, 9.94, 5.5]
-    summer_all_vals = [22.42, 0.16, 4.58, 29.5]
-
-    x = np.arange(len(categories))
-    width = 0.35
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    axes[0].bar(x - width / 2, winter_all_vals, width, label="All Hours", color="lightblue")
-    axes[0].bar(x + width / 2, winter_peak_vals, width, label="Extreme Peak Hours", color="darkblue")
-    axes[0].set_title("Winter (Oct–Dec): Extreme Peaks vs. All Hours")
-    axes[0].set_xticks(x)
-    axes[0].set_xticklabels(categories, fontsize=9)
-    axes[0].legend()
-    axes[0].grid(alpha=0.3, axis="y")
-
-    axes[1].bar(x - width / 2, summer_all_vals, width, label="All Hours", color="lightsalmon")
-    axes[1].bar(x + width / 2, summer_peak_vals, width, label="Extreme Peak Hours", color="darkred")
-    axes[1].set_title("Summer (Jul–Aug): Extreme Peaks vs. All Hours")
-    axes[1].set_xticks(x)
-    axes[1].set_xticklabels(categories, fontsize=9)
-    axes[1].legend()
-    axes[1].grid(alpha=0.3, axis="y")
-
-    st.pyplot(fig)
-
-    st.markdown(
-        """
-        **Winter**: extreme peaks are cold weekday evenings (~7 PM), with heating-degree
-        values ~60% above the seasonal average.
-
-        **Summer**: extreme peaks are hot weekday evenings (~7 PM), with cooling-degree
-        values more than double the seasonal average.
-
-        Both seasons show the same weekday-dominant, early-evening pattern — despite
-        opposite underlying physical drivers.
-        """
-    )
+Created by {CREATOR}. Built with public data only. Not an official DPU or utility analysis.
+""")

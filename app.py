@@ -145,49 +145,6 @@ st.markdown("Which of Boston's old gas streets should get new pipe, and which wo
             "electric heat? A street-by-street look built from public data.")
 st.caption(f"Created by **{CREATOR}**")
 
-# Program figures for the description, computed from DPU's report (gsep_annual.csv)
-if gsep is not None and len(gsep):
-    _spent = gsep["spend_musd"].sum() / 1000
-    _miles = gsep["main_miles"].sum()
-    _cpm0 = gsep["spend_musd"].iloc[0] / gsep["main_miles"].iloc[0]
-    _cpm1 = gsep["spend_musd"].iloc[-1] / gsep["main_miles"].iloc[-1]
-    _y0, _y1 = int(gsep["year"].iloc[0]), int(gsep["year"].iloc[-1])
-    program_line = (f"Between {_y0} and {_y1}, Massachusetts gas utilities spent about **${_spent:.2f} billion** "
-                    f"replacing **{_miles:,.0f} miles** of leak-prone gas mains under the Gas System Enhancement "
-                    f"Program (GSEP). Over the same period, spending per mile rose from **${_cpm0:.2f}M** to "
-                    f"**${_cpm1:.2f}M**, while the number of miles replaced each year stayed roughly flat.")
-else:
-    program_line = ("Massachusetts gas utilities have spent billions replacing leak-prone gas mains under the "
-                    "Gas System Enhancement Program (GSEP), at a cost per mile that has risen steeply.")
-
-with st.expander("About this project", expanded=True):
-    st.markdown(f"""
-{program_line} In 2025, the Department of Public Utilities cut the program's spending cap and directed utilities to
-consider cheaper repairs and non-pipe alternatives, such as electrifying the homes on a street instead of laying new pipe.
-
-**The question.** For each of Boston's roughly 17,800 street segments: how likely is it to sit on old, leak-prone pipe,
-and would it cost less to replace that pipe or to switch the homes on that street to electric heat?
-
-**How it was built.**
-1. **Data extraction and cleaning:** Boston street segments, the FY2026 property assessment, BERDO building energy
-   reports, Census housing and heating data, the state's environmental-justice map, and DPU's own reports, all
-   pulled from public sources and joined street by street.
-2. **Exploratory analysis:** building age as a proxy for pipe age, gas dependence, equity patterns, large-building
-   gas demand, and the GSEP spending and mileage record.
-3. **Modeling:** k-means clustering into six street types, a leak-prone risk score calibrated to DPU's reported
-   leak-prone share for Boston Gas, and a cost model that compares new pipe with electrification and schedules
-   work within an annual budget.
-4. **This app:** change the assumptions in the sidebar and see the plan, the map, and the costs update.
-
-**Main finding.** House-by-house electrification beats new pipe only on streets with low housing density.
-Most of Boston's oldest streets are dense triple-decker and rental blocks, so for them the realistic alternative
-to new pipe is a shared system such as networked geothermal.
-
-**Who it's for.** Regulators, utilities, city planners, and advocates weighing where pipe replacement money
-does the most good, and where alternatives deserve a closer look.
-
-*Built with public data only. Not an official DPU or utility analysis.*
-""")
 
 with st.sidebar:
     st.header("Assumptions")
@@ -232,17 +189,19 @@ with tab_overview:
     c[3].metric("Saved vs replacing everything", f"{saved:.0%}")
 
     st.subheader("What the analysis shows")
+    replace_share = 1 - stats["electrify_miles"] / stats["flagged_miles"] if stats["flagged_miles"] else 0
     st.markdown(
-        f"- With the current assumptions, house-by-house electrification beats new pipe only on streets with fewer than "
-        f"**{stats['breakeven_per_100m']:.1f} homes per 100 m**.\n"
-        f"- Most of Boston's oldest streets are dense triple-decker and rental blocks, well above that line. "
-        f"As a result, house-by-house electrification is generally not the lower-cost option on these streets; "
-        f"across the full system, the modeled strategy saves **{saved:.0%}** compared with replacing all flagged pipe.\n"
-        f"- **{stats['ej_share']:.0%}** of the streets where electrification wins are in environmental-justice "
-        f"neighborhoods, so income-qualified support and renter protections would matter.\n"
-        f"- At **${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
-        f"- For dense streets, the realistic alternative is shared systems such as networked geothermal, "
-        f"which this version does not yet model."
+        f"- On streets with more than about **{stats['breakeven_per_100m']:.1f} homes per 100 m**, new pipe costs "
+        f"less than electrifying every home.\n"
+        f"- Most of Boston's oldest streets are dense triple-decker and rental blocks, well above that density, so "
+        f"**targeted replacement remains the cost-effective choice for about {replace_share:.0%} of flagged miles**. "
+        f"Across the full system, the modeled strategy saves **{saved:.0%}** compared with replacing all flagged pipe.\n"
+        f"- Electrification is a **niche option**: cheaper on about {stats['electrify_miles']:,.0f} miles, home to "
+        f"roughly {stats['electrify_homes']:,.0f} households, mostly ({stats['ej_share']:.0%} of those miles) in "
+        f"environmental-justice neighborhoods, where program costs and renter issues would need careful handling.\n"
+        f"- Prioritizing streets by risk per dollar lets a fixed budget address the highest-risk pipe first: at "
+        f"**${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
+        f"- Shared systems such as networked geothermal are not evaluated here; pilot evidence to date is limited."
     )
 
     if gsep is not None:

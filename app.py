@@ -11,7 +11,6 @@ import altair as alt
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pydeck as pdk
 import streamlit as st
 
 st.set_page_config(page_title="Boston gas pipe triage", page_icon="🔥", layout="wide")
@@ -69,18 +68,7 @@ def load_data():
     seg["units_per_100m"] = seg["res_units"] / (seg["length_m"] / 100)
     seg["street"] = (seg["ST_NAME"].fillna("").str.title() + " " + seg["ST_TYPE"].fillna("").str.title()).str.strip()
     seg["archetype_name"] = name_street_types(seg)
-    seg["homes_txt"] = seg["res_units"].fillna(0).round().astype(int).astype(str)
-    seg["year_txt"] = seg["med_yr_built"].round().astype("Int64").astype(str)
-
-    def paths(geom):
-        if geom is None or geom.is_empty:
-            return []
-        parts = [geom] if geom.geom_type == "LineString" else list(getattr(geom, "geoms", []))
-        return [[[round(x, 6), round(y, 6)] for x, y, *_ in p.coords] for p in parts]
-
-    seg["paths"] = seg.geometry.apply(paths)
-    df = pd.DataFrame(seg.drop(columns="geometry"))
-    df = df.explode("paths").dropna(subset=["paths"]).reset_index(drop=True)
+    df = pd.DataFrame(seg.drop(columns="geometry")).drop_duplicates("seg_id").reset_index(drop=True)
 
     summary = json.load(open(SUMMARY_FILE)) if os.path.exists(SUMMARY_FILE) else {}
     gsep = pd.read_csv(GSEP_FILE).sort_values("year") if os.path.exists(GSEP_FILE) else None
@@ -136,16 +124,6 @@ def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget):
     return actions, years, s, stats
 
 
-def path_layer(frame, color_col, width_col):
-    return pdk.Layer("PathLayer", frame, get_path="paths", get_color=color_col, get_width=width_col,
-                     width_units="pixels", width_min_pixels=1, cap_rounded=True, joint_rounded=True,
-                     pickable=True, auto_highlight=True)
-
-
-def boston_view():
-    return pdk.ViewState(latitude=42.315, longitude=-71.075, zoom=11.2, pitch=0)
-
-
 def money(x):
     return f"${x / 1e9:,.2f}B" if abs(x) >= 1e9 else f"${x / 1e6:,.0f}M"
 
@@ -198,11 +176,8 @@ with st.sidebar:
 actions, years, plan, stats = triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget_m * 1e6)
 df["action"] = df["seg_id"].map(actions)
 df["plan_year"] = df["seg_id"].map(years)
-df["color"] = df["action"].map(ACTION_COLORS)
-df["width"] = np.where(df["action"].str.startswith("Monitor"), 1, 3)
-df["plan_year_txt"] = df["plan_year"].map(lambda y: "" if pd.isna(y) else f"Year {int(y)}")
 
-tab_overview, tab_map, tab_types, tab_methods = st.tabs(["Findings", "Triage map", "Street types", "Methods and sources"])
+tab_overview, tab_map, tab_types, tab_methods = st.tabs(["Findings", "Triage plan", "Street types", "Methods and sources"])
 
 # ---------------- Findings
 with tab_overview:
@@ -253,7 +228,7 @@ with tab_overview:
         st.caption("Source: DPU Report to the Legislature on Natural Gas Leaks, D.P.U. 25-GLR-01 (Dec 31, 2025). "
                    "Spending includes mains, services, and related work, in nominal dollars.")
 
-# ---------------- Triage map
+# ---------------- Triage plan
 with tab_map:
     m = st.columns(4)
     m[0].metric("Replace or repair", f"{stats['flagged_miles'] - stats['electrify_miles']:,.0f} mi")
@@ -263,16 +238,25 @@ with tab_map:
 
     nbhds = ["All neighborhoods"] + sorted(df["NBHD_L"].dropna().unique())
     pick = st.selectbox("Neighborhood", nbhds)
-    view_df = df if pick == "All neighborhoods" else df[df["NBHD_L"] == pick]
 
-    st.pydeck_chart(pdk.Deck(
-        layers=[path_layer(view_df, "color", "width")], initial_view_state=boston_view(), map_provider="carto", map_style="light",
-        tooltip={"html": "<b>{street}</b><br/>{NBHD_L}<br/>{action} {plan_year_txt}<br/>"
-                         "Homes on block: {homes_txt}<br/>Median building year: {year_txt}"}),
-        width="stretch", height=560)
-    legend = " &nbsp; ".join(f"<span style='color:rgb{tuple(c)};font-size:20px'>■</span> {a}"
-                             for a, c in ACTION_COLORS.items())
-    st.markdown(legend, unsafe_allow_html=True)
+    flagged = plan.reset_index()
+    if pick != "All neighborhoods":
+        flagged = flagged[flagged["NBHD_L"] == pick]
+    by_nbhd = flagged.groupby(["NBHD_L", "action"], as_index=False)["miles"].sum()
+    if len(by_nbhd):
+        hex_colors = {a: "#%02x%02x%02x" % tuple(c) for a, c in ACTION_COLORS.items() if not a.startswith("Monitor")}
+        order = by_nbhd.groupby("NBHD_L")["miles"].sum().sort_values(ascending=False).index.tolist()
+        st.altair_chart(alt.Chart(by_nbhd).mark_bar().encode(
+            y=alt.Y("NBHD_L:N", sort=order, title=None),
+            x=alt.X("miles:Q", title="Flagged street miles"),
+            color=alt.Color("action:N", title=None, scale=alt.Scale(domain=list(hex_colors), range=list(hex_colors.values())),
+                            legend=alt.Legend(orient="bottom")),
+            tooltip=[alt.Tooltip("NBHD_L:N", title="Neighborhood"), alt.Tooltip("action:N", title="Action"),
+                     alt.Tooltip("miles:Q", title="Miles", format=",.1f")]
+        ).properties(title="Recommended action on flagged streets, by neighborhood",
+                     height=max(220, 26 * len(order))), width="stretch")
+    else:
+        st.info("No flagged streets in this neighborhood.")
 
     st.subheader("Priority list")
     table = (plan.reset_index()
@@ -291,17 +275,16 @@ with tab_map:
 with tab_types:
     st.markdown("Streets grouped by k-means clustering on building age, housing density, large-building gas use, "
                 "gas heat share, renter share, income, and heat pump share.")
-    tdf = df.copy()
-    tdf["tcolor"] = tdf["archetype_name"].map(TYPE_COLORS).apply(lambda c: c if isinstance(c, list) else [120, 120, 120])
-    tdf["twidth"] = 2
-    st.pydeck_chart(pdk.Deck(
-        layers=[path_layer(tdf, "tcolor", "twidth")],
-        initial_view_state=boston_view(), map_provider="carto", map_style="light",
-        tooltip={"html": "<b>{street}</b><br/>{archetype_name}"}), width="stretch", height=500)
-    present = [n for n in TYPE_COLORS if n in set(df["archetype_name"])]
-    st.markdown(" &nbsp; ".join(f"<span style='color:rgb{tuple(TYPE_COLORS[n])};font-size:20px'>■</span> {n}"
-                                for n in present), unsafe_allow_html=True)
-    one = df.drop_duplicates("seg_id")
+    one = df
+    miles_by_type = one.groupby("archetype_name", as_index=False)["miles"].sum()
+    known = [n for n in TYPE_COLORS if n in set(miles_by_type["archetype_name"])]
+    st.altair_chart(alt.Chart(miles_by_type).mark_bar().encode(
+        y=alt.Y("archetype_name:N", sort="-x", title=None),
+        x=alt.X("miles:Q", title="Street miles"),
+        color=alt.Color("archetype_name:N", legend=None,
+                        scale=alt.Scale(domain=known, range=["#%02x%02x%02x" % tuple(TYPE_COLORS[n]) for n in known])),
+        tooltip=[alt.Tooltip("archetype_name:N", title="Street type"), alt.Tooltip("miles:Q", title="Miles", format=",.0f")]
+    ).properties(title="Boston street miles by type", height=260), width="stretch")
     prof = (one.groupby("archetype_name")
                .agg(Miles=("miles", "sum"), **{"Building year": ("med_yr_built", "median")},
                     **{"Homes per 100 m": ("units_per_100m", "median")},

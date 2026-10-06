@@ -1,8 +1,7 @@
-   streamlit>=1.50
-   pandas
-   numpy
-   geopandas
-   shapely
-   pyogrio
-   pydeck
-   altair
+streamlit>=1.50
+pandas
+numpy
+geopandas
+shapely
+pyogrio
+altair

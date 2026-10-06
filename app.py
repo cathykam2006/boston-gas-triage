@@ -35,7 +35,27 @@ TYPE_COLORS = {
     "Large-building streets": [142, 68, 173],
     "Heat-pump streets": [39, 174, 96],
 }
-BASEMAP = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+
+
+def name_street_types(seg):
+    """Give each k-means cluster a plain-language name based on its average traits."""
+    if "archetype_name" in seg and not seg["archetype_name"].astype(str).str.startswith("Type").all():
+        return seg["archetype_name"]
+    if "archetype" not in seg:
+        return pd.Series("Not available", index=seg.index)
+    get = lambda c: seg[c] if c in seg else pd.Series(0.0, index=seg.index)
+    prof = pd.DataFrame({"a": seg["archetype"], "year": get("med_yr_built"), "dens": get("units_per_100m"),
+                         "gas": get("large_bldg_gas_therms"), "hp": get("pct_heat_pump")}).groupby("a").mean()
+
+    def name(r):
+        if r.hp > 0.3:       return "Heat-pump streets"
+        if r.gas > 1000:     return "Large-building streets"
+        if r.dens < 1:       return "Through streets, few homes"
+        if r.year >= 1960:   return "Newer low-density streets"
+        if r.dens >= 10:     return "Dense old rental neighborhoods"
+        return "Older owner-occupied neighborhoods"
+
+    return seg["archetype"].map(prof.apply(name, axis=1))
 
 
 # ---------------------------------------------------------------- data
@@ -48,8 +68,9 @@ def load_data():
         seg["miles"] = seg["length_m"] / 1609.34
     seg["units_per_100m"] = seg["res_units"] / (seg["length_m"] / 100)
     seg["street"] = (seg["ST_NAME"].fillna("").str.title() + " " + seg["ST_TYPE"].fillna("").str.title()).str.strip()
-    if "archetype_name" not in seg:
-        seg["archetype_name"] = "Type " + seg["archetype"].astype(int).astype(str) if "archetype" in seg else "Not available"
+    seg["archetype_name"] = name_street_types(seg)
+    seg["homes_txt"] = seg["res_units"].fillna(0).round().astype(int).astype(str)
+    seg["year_txt"] = seg["med_yr_built"].round().astype("Int64").astype(str)
 
     def paths(geom):
         if geom is None or geom.is_empty:
@@ -117,7 +138,8 @@ def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget):
 
 def path_layer(frame, color_col, width_col):
     return pdk.Layer("PathLayer", frame, get_path="paths", get_color=color_col, get_width=width_col,
-                     width_units="pixels", width_min_pixels=1, pickable=True, auto_highlight=True)
+                     width_units="pixels", width_min_pixels=1, cap_rounded=True, joint_rounded=True,
+                     pickable=True, auto_highlight=True)
 
 
 def boston_view():
@@ -155,9 +177,14 @@ with st.sidebar:
                         step=1_000, help="Typical whole-home air-source install is about $22,000 (Mass Save program average).")
     budget_m = st.slider("Annual budget for Boston streets ($M)", 25, 300, int(summary.get("annual_budget_usd", 100e6) / 1e6), step=25)
     with st.expander("Advanced"):
-        cost_per_mile = st.number_input("Pipe replacement cost per mile ($)", 1_000_000, 8_000_000,
+        cost_per_mile = st.number_input("All-in replacement cost per mile of main ($)", 1_000_000, 8_000_000,
                                         int(default_cpm), step=100_000,
-                                        help=f"Default: {summary.get('cost_year', 'latest')} statewide actual from DPU's report.")
+                                        help=f"Total GSEP spending divided by miles of main replaced, statewide, "
+                                             f"{summary.get('cost_year', 'latest')} actual from DPU's report. "
+                                             f"Includes the main plus the service lines to each building, "
+                                             f"excavation, paving restoration, and related work, not just the pipe itself.")
+        st.caption(f"Default ${default_cpm / 1e6:.2f}M is the all-in program cost per mile of main, "
+                   f"including service lines and street restoration.")
         mult = st.number_input("Customer cost per $1 of pipe capital", 1.0, 4.0, float(default_mult), step=0.05,
                                help=f"Default source: {mult_source}")
         hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18,
@@ -239,9 +266,9 @@ with tab_map:
     view_df = df if pick == "All neighborhoods" else df[df["NBHD_L"] == pick]
 
     st.pydeck_chart(pdk.Deck(
-        layers=[path_layer(view_df, "color", "width")], initial_view_state=boston_view(), map_style=BASEMAP,
+        layers=[path_layer(view_df, "color", "width")], initial_view_state=boston_view(), map_provider="carto", map_style="light",
         tooltip={"html": "<b>{street}</b><br/>{NBHD_L}<br/>{action} {plan_year_txt}<br/>"
-                         "Homes on block: {res_units}<br/>Median building year: {med_yr_built}"}),
+                         "Homes on block: {homes_txt}<br/>Median building year: {year_txt}"}),
         width="stretch", height=560)
     legend = " &nbsp; ".join(f"<span style='color:rgb{tuple(c)};font-size:20px'>■</span> {a}"
                              for a, c in ACTION_COLORS.items())
@@ -266,11 +293,14 @@ with tab_types:
                 "gas heat share, renter share, income, and heat pump share.")
     tdf = df.copy()
     tdf["tcolor"] = tdf["archetype_name"].map(TYPE_COLORS).apply(lambda c: c if isinstance(c, list) else [120, 120, 120])
+    tdf["twidth"] = 2
     st.pydeck_chart(pdk.Deck(
-        layers=[pdk.Layer("PathLayer", tdf, get_path="paths", get_color="tcolor", get_width=2,
-                          width_units="pixels", pickable=True)],
-        initial_view_state=boston_view(), map_style=BASEMAP,
+        layers=[path_layer(tdf, "tcolor", "twidth")],
+        initial_view_state=boston_view(), map_provider="carto", map_style="light",
         tooltip={"html": "<b>{street}</b><br/>{archetype_name}"}), width="stretch", height=500)
+    present = [n for n in TYPE_COLORS if n in set(df["archetype_name"])]
+    st.markdown(" &nbsp; ".join(f"<span style='color:rgb{tuple(TYPE_COLORS[n])};font-size:20px'>■</span> {n}"
+                                for n in present), unsafe_allow_html=True)
     one = df.drop_duplicates("seg_id")
     prof = (one.groupby("archetype_name")
                .agg(Miles=("miles", "sum"), **{"Building year": ("med_yr_built", "median")},
@@ -287,7 +317,7 @@ with tab_methods:
 the share of street miles flagged matches the leak-prone share of Boston Gas's mains reported by DPU.
 When leak records are added, a gradient-boosting model replaces this score and is tested on a held-out year.
 
-**Cost comparison.** For each flagged street: new pipe = miles × cost per mile; electrification = homes × heat pump cost.
+**Cost comparison.** For each flagged street: new pipe = miles × all-in cost per mile of main (DPU statewide actual, which includes service lines, excavation and paving restoration); electrification = homes × heat pump cost.
 Streets with large BERDO-reporting buildings, or no homes, are not considered for electrification.
 The schedule ranks streets by risk-weighted miles per dollar and fills each year's budget.
 

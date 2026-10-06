@@ -136,8 +136,16 @@ if not os.path.exists(SEG_FILE):
 
 df, summary, gsep = load_data()
 default_cpm = summary.get("cost_per_mile_usd", 3.06e6)
-default_mult = summary.get("ratepayer_multiplier", 1.0)
-mult_source = summary.get("ratepayer_multiplier_source", "not available")
+# Lifetime customer cost per $1 of GSEP capital. DPU's GSEP Working Group (minutes, Oct 20, 2023) reported that
+# $15.9B of projected GSEP capital spending (2022-2039) would cost ratepayers $34.4B once returns and financing are included.
+DPU_WG_CAPEX_B, DPU_WG_RATEPAYER_B = 15.9, 34.4
+if summary.get("ratepayer_multiplier", 1.0) > 1.0:
+    default_mult = summary["ratepayer_multiplier"]
+    mult_source = summary.get("ratepayer_multiplier_source", "DPU GSEP Working Group minutes, Oct 20, 2023")
+else:
+    default_mult = DPU_WG_RATEPAYER_B / DPU_WG_CAPEX_B
+    mult_source = (f"DPU GSEP Working Group minutes, Oct 20, 2023: ${DPU_WG_CAPEX_B}B of GSEP capital (2022-2039) "
+                   f"costs ratepayers ${DPU_WG_RATEPAYER_B}B")
 risk_source = summary.get("risk_source", df["risk_source"].iloc[0] if "risk_source" in df else "")
 
 st.title("Repair, replace, or retire?")
@@ -163,13 +171,14 @@ with st.sidebar:
                                              f"excavation, paving restoration, and related work, not just the pipe itself.")
         st.caption(f"Default ${default_cpm / 1e6:.2f}M is the all-in program cost per mile of main, "
                    f"including service lines and street restoration.")
-        mult = st.number_input("Customer cost per $1 of pipe capital", 1.0, 4.0, float(default_mult), step=0.05,
-                               help=f"Default source: {mult_source}")
+        mult = st.number_input("Lifetime customer cost per $1 of pipe capital ($)", 1.0, 4.0, round(float(default_mult), 2),
+                               step=0.05,
+                               help=f"How much gas customers pay over the life of new pipe for every $1 the utility "
+                                    f"spends building it, including the utility's allowed return, financing, and "
+                                    f"depreciation. Used only when comparing by lifetime cost. "
+                                    f"Default ${default_mult:.2f}. Source: {mult_source}.")
         hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18,
                             help="Used only for lifetime cost: replacements over a 60-year pipe life, discounted at 3%.")
-    if basis == "Lifetime cost to customers" and default_mult == 1.0:
-        st.warning("The DPU customer-cost ratio was not loaded in Part 3, so pipe lifetime cost equals capital cost. "
-                   "Set it under Advanced, or rerun Part 3, Cell 4 with the working group minutes saved.")
     st.divider()
     st.caption(f"Created by {CREATOR}")
 
@@ -203,7 +212,7 @@ with tab_overview:
         f"environmental-justice neighborhoods, where program costs and renter issues would need careful handling.\n"
         f"- Prioritizing streets by risk per dollar lets a fixed budget address the highest-risk pipe first: at "
         f"**${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
-        f"- Shared systems such as networked geothermal are not evaluated here; pilot evidence to date is limited."
+        f"- Networked geothermal: still waiting for pilot cost data before it can be evaluated."
     )
 
     if gsep is not None:
@@ -307,7 +316,7 @@ The schedule ranks streets by risk-weighted miles per dollar and fills each year
 **Data sources**
 - DPU, Report to the Legislature on the Prevalence of Natural Gas Leaks, D.P.U. 25-GLR-01 (Dec 31, 2025): GSEP spending,
   miles replaced, leak counts, Boston Gas leak-prone share.
-- DPU GSEP Working Group minutes (Oct 20, 2023): customer cost per $1 of GSEP capital. Status: {mult_source}.
+- DPU GSEP Working Group minutes (Oct 20, 2023): lifetime customer cost per $1 of GSEP capital (${default_mult:.2f}): {mult_source}.
 - City of Boston open data: street segments (SAM), FY2026 property assessment, BERDO building energy reporting.
 - U.S. Census Bureau: ACS 5-year estimates (summary file) and block group boundaries.
 - MassGIS: 2020 Environmental Justice populations.

@@ -144,8 +144,8 @@ if summary.get("ratepayer_multiplier", 1.0) > 1.0:
     mult_source = summary.get("ratepayer_multiplier_source", "DPU GSEP Working Group minutes, Oct 20, 2023")
 else:
     default_mult = DPU_WG_RATEPAYER_B / DPU_WG_CAPEX_B
-    mult_source = (f"DPU GSEP Working Group minutes, Oct 20, 2023: ${DPU_WG_CAPEX_B}B of GSEP capital (2022-2039) "
-                   f"costs ratepayers ${DPU_WG_RATEPAYER_B}B")
+    mult_source = (f"DPU GSEP Working Group minutes, Oct 20, 2023: \\${DPU_WG_CAPEX_B}B of GSEP capital (2022-2039) "
+                   f"costs ratepayers \\${DPU_WG_RATEPAYER_B}B")
 risk_source = summary.get("risk_source", df["risk_source"].iloc[0] if "risk_source" in df else "")
 
 st.title("Repair, replace, or retire?")
@@ -159,25 +159,28 @@ with st.sidebar:
     basis = st.radio("Compare costs by", ["Capital cost", "Lifetime cost to customers"],
                      help="Lifetime cost adds the utility's return and financing on new pipe, and heat pump "
                           "replacements over 60 years.")
-    hp_cost = st.slider("Heat pump cost per home ($)", 10_000, 45_000, int(summary.get("hp_cost_per_unit_usd", 22_000)),
-                        step=1_000, help="Typical whole-home air-source install is about $22,000 (Mass Save program average).")
-    budget_m = st.slider("Annual budget for Boston streets ($M)", 25, 300, int(summary.get("annual_budget_usd", 100e6) / 1e6), step=25)
+    hp_cost = st.slider("Heat pump cost per home (\\$)", 10_000, 45_000, int(summary.get("hp_cost_per_unit_usd", 22_000)),
+                        step=1_000, help="Typical whole-home air-source install is about \\$22,000, including installation labor (Mass Save program average).")
+    budget_m = st.slider("Annual budget for Boston streets (\\$M)", 25, 300, int(summary.get("annual_budget_usd", 100e6) / 1e6), step=25)
     with st.expander("Advanced"):
-        cost_per_mile = st.number_input("All-in replacement cost per mile of main ($)", 1_000_000, 8_000_000,
+        cost_per_mile = st.number_input("All-in replacement cost per mile of main (\\$)", 1_000_000, 8_000_000,
                                         int(default_cpm), step=100_000,
                                         help=f"Total GSEP spending divided by miles of main replaced, statewide, "
                                              f"{summary.get('cost_year', 'latest')} actual from DPU's report. "
                                              f"Includes the main plus the service lines to each building, "
                                              f"excavation, paving restoration, and related work, not just the pipe itself.")
-        st.caption(f"Default ${default_cpm / 1e6:.2f}M is the all-in program cost per mile of main, "
+        st.caption(f"Default \\${default_cpm / 1e6:.2f}M is the all-in program cost per mile of main, "
                    f"including service lines and street restoration.")
-        mult = st.number_input("Lifetime customer cost per $1 of pipe capital ($)", 1.0, 4.0, round(float(default_mult), 2),
-                               step=0.05,
-                               help=f"How much gas customers pay over the life of new pipe for every $1 the utility "
+        if basis != "Lifetime cost to customers":
+            st.caption("The two settings below apply only when **Compare costs by** is set to "
+                       "**Lifetime cost to customers**.")
+        mult = st.number_input("Lifetime customer cost per \\$1 of pipe capital", 1.0, 4.0, round(float(default_mult), 2),
+                               step=0.05, disabled=(basis != "Lifetime cost to customers"),
+                               help=f"How much gas customers pay over the life of new pipe for every \\$1 the utility "
                                     f"spends building it, including the utility's allowed return, financing, and "
                                     f"depreciation. Used only when comparing by lifetime cost. "
-                                    f"Default ${default_mult:.2f}. Source: {mult_source}.")
-        hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18,
+                                    f"Default \\${default_mult:.2f}. Source: {mult_source}.")
+        hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18, disabled=(basis != "Lifetime cost to customers"),
                             help="Used only for lifetime cost: replacements over a 60-year pipe life, discounted at 3%.")
     st.divider()
     st.caption(f"Created by {CREATOR}")
@@ -211,7 +214,7 @@ with tab_overview:
         f"roughly {stats['electrify_homes']:,.0f} households, mostly ({stats['ej_share']:.0%} of those miles) in "
         f"environmental-justice neighborhoods, where program costs and renter issues would need careful handling.\n"
         f"- Prioritizing streets by risk per dollar lets a fixed budget address the highest-risk pipe first: at "
-        f"**${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
+        f"**\\${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
         f"- Networked geothermal: still waiting for pilot cost data before it can be evaluated."
     )
 
@@ -316,7 +319,7 @@ The schedule ranks streets by risk-weighted miles per dollar and fills each year
 **Data sources**
 - DPU, Report to the Legislature on the Prevalence of Natural Gas Leaks, D.P.U. 25-GLR-01 (Dec 31, 2025): GSEP spending,
   miles replaced, leak counts, Boston Gas leak-prone share.
-- DPU GSEP Working Group minutes (Oct 20, 2023): lifetime customer cost per $1 of GSEP capital (${default_mult:.2f}): {mult_source}.
+- DPU GSEP Working Group minutes (Oct 20, 2023): lifetime customer cost per \\$1 of GSEP capital (\\${default_mult:.2f}): {mult_source}.
 - City of Boston open data: street segments (SAM), FY2026 property assessment, BERDO building energy reporting.
 - U.S. Census Bureau: ACS 5-year estimates (summary file) and block group boundaries.
 - MassGIS: 2020 Environmental Justice populations.

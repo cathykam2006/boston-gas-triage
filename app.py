@@ -263,8 +263,9 @@ with tab_overview:
     saved = 1 - stats["mixed"] / stats["all_replace"] if stats["all_replace"] else 0
     c = st.columns(4)
     c[0].metric("Likely leak-prone streets", f"{stats['flagged_miles']:,.0f} mi")
-    c[1].metric("Tipping point", f"{stats['breakeven_per_100m']:.1f} homes / 100 m",
-                help="Below this density, electrifying every home costs less than new pipe.")
+    c[1].metric("Tipping point (homes per 100 m)", f"{stats['breakeven_per_100m']:.1f}",
+                help="Homes per 100 meters of street. Below this density, electrifying every home costs less "
+                     "than new pipe; above it, new pipe costs less.")
     c[2].metric("Cheaper to electrify", f"{stats['electrify_miles']:,.0f} mi",
                 f"{stats['electrify_homes']:,.0f} homes", delta_color="off")
     c[3].metric("Saved vs replacing everything", f"{saved:.0%}")
@@ -280,8 +281,7 @@ with tab_overview:
         f"- On streets with more than about **{stats['breakeven_per_100m']:.1f} homes per 100 m**, new pipe costs "
         f"less than electrifying every home.\n"
         f"- Most of Boston's oldest streets are dense triple-decker and rental blocks, well above that density, so "
-        f"**targeted replacement remains the cost-effective choice for about {replace_share:.0%} of flagged miles**. "
-        f"Across the full system, the modeled strategy saves **{saved:.0%}** compared with replacing all flagged pipe.\n"
+        f"**targeted replacement remains the cost-effective choice for about {replace_share:.0%} of flagged miles**.\n"
         f"- Electrification is a **niche option**: cheaper on about {stats['electrify_miles']:,.0f} miles, home to "
         f"roughly {stats['electrify_homes']:,.0f} households, mostly ({stats['ej_share']:.0%} of those miles) in "
         f"environmental-justice neighborhoods, where program costs and renter issues would need careful handling. "

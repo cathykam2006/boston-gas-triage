@@ -133,6 +133,38 @@ def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget, dead_end_on
     return actions, years, s, stats
 
 
+def tipping_point_visual(breakeven, typical_dense=19, max_homes=20):
+    """A row of homes on 100 m of street, with a line at the tipping point (HTML, no dollar signs)."""
+    shown = min(breakeven, max_homes)
+    cells = []
+    for i in range(1, max_homes + 1):
+        bg = "#FBE9DA" if i <= shown else "#E3EEF6"
+        cells.append(f"<span style='font-size:22px;line-height:1;padding:5px 2px;background:{bg};"
+                     f"border-radius:6px'>&#127968;</span>")
+        if i == int(shown):
+            cells.append("<span style='display:inline-flex;flex-direction:column;align-items:center;margin:0 4px'>"
+                         f"<span style='font-size:13px;font-weight:700;color:#17263A'>{breakeven:.1f}</span>"
+                         "<span style='width:3px;height:34px;background:#17263A;border-radius:2px'></span></span>")
+    beyond = f" (the tipping point is beyond {max_homes} homes)" if breakeven > max_homes else ""
+    return f"""
+<div style="border:1px solid #D3DCD8;border-radius:12px;padding:18px 22px;background:#FAFBFA;margin:6px 0 18px">
+  <div style="font-weight:700;font-size:20px;color:#17263A">The key idea: the tipping point</div>
+  <div style="color:#3A4757;margin:4px 0 14px">Picture 100 meters of street, about one city block.
+    Each house is one home on it.</div>
+  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:3px">{"".join(cells)}</div>
+  <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;margin-top:12px;font-weight:600">
+    <span style="color:#A3501A">&larr; Fewer homes: electrifying tends to cost less</span>
+    <span style="color:#2C6E9E">More homes: new pipe tends to cost less &rarr;</span>
+  </div>
+  <div style="font-size:14px;color:#5D6B78;margin-top:10px;line-height:1.5">
+    The line sits at about <b>{breakeven:.1f} homes per 100 m</b>{beyond}. New pipe costs the same however many
+    homes are on the street, while heat pumps are paid for home by home, so the more homes share a street, the more
+    new pipe pays off. A typical dense old Boston street has about {typical_dense} homes per 100 m, well past the line.
+    This compares cost only: retiring the pipe is also possible only on a dead-end street.
+  </div>
+</div>"""
+
+
 def money(x):
     return f"${x / 1e9:,.2f}B" if abs(x) >= 1e9 else f"${x / 1e6:,.0f}M"
 
@@ -269,6 +301,8 @@ with tab_overview:
     c[2].metric("Cheaper to electrify", f"{stats['electrify_miles']:,.0f} mi",
                 f"{stats['electrify_homes']:,.0f} homes", delta_color="off")
     c[3].metric("Saved vs replacing everything", f"{saved:.0%}")
+
+    st.markdown(tipping_point_visual(stats["breakeven_per_100m"]), unsafe_allow_html=True)
 
     st.subheader("What the analysis shows")
     replace_share = 1 - stats["electrify_miles"] / stats["flagged_miles"] if stats["flagged_miles"] else 0

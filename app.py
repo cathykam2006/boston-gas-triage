@@ -221,7 +221,15 @@ But the scopes aren't equally complete:
 | **Lifespan** | Many decades | Heat pumps need replacing every 15 to 20 years |
 | **Monthly bills** | Not counted | Not counted (electric heat can cost households more or less than gas) |
 | **Who pays** | Gas customers through rates, with utility return | Homeowners, with rebates partly funded by ratepayers |
-| **Network** | Fits the existing system | Only possible if the whole street can come off gas |
+| **Network** | Fits the existing system | Only possible if no other gas customers depend on that pipe |
+
+**The gas network is connected.** A gas main is not an isolated piece of pipe: it often carries gas through one
+street to reach other streets further along the network, sometimes to the far end of a neighborhood. If even one
+household beyond that point still uses gas, the main has to stay in service, so retiring it makes no sense no matter
+how few homes are on the street itself. This analysis prices each street segment on its own and cannot see how pipes
+connect, so every "Electrify homes" result is a candidate to check against the utility's network maps, not a
+recommendation. Electrification is only realistic where an entire branch of the network, such as a dead-end street,
+could come off gas together.
 
 **Other limits:** which streets have leak-prone pipe is estimated from building age, not utility pipe or leak
 records; housing counts for apartment buildings are estimates; and the cost per mile is a statewide average.
@@ -251,7 +259,8 @@ with tab_overview:
         f"Across the full system, the modeled strategy saves **{saved:.0%}** compared with replacing all flagged pipe.\n"
         f"- Electrification is a **niche option**: cheaper on about {stats['electrify_miles']:,.0f} miles, home to "
         f"roughly {stats['electrify_homes']:,.0f} households, mostly ({stats['ej_share']:.0%} of those miles) in "
-        f"environmental-justice neighborhoods, where program costs and renter issues would need careful handling.\n"
+        f"environmental-justice neighborhoods, where program costs and renter issues would need careful handling. "
+        f"These are candidates only: a main can be retired only if no customers further along the network still use gas.\n"
         f"- Prioritizing streets by risk per dollar lets a fixed budget address the highest-risk pipe first: at "
         f"**\\${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
         f"- Networked geothermal: still waiting for pilot cost data before it can be evaluated."
@@ -366,7 +375,7 @@ The schedule ranks streets by risk-weighted miles per dollar and fills each year
 **Limits**
 - The risk score is provisional until leak records are added.
 - Statewide cost per mile; Boston's urban streets may cost more.
-- Removing gas from one street can affect neighboring streets; the network is not modeled.
+- The gas network is connected: a main can only be retired if no customers further along it still use gas. The network is not modeled, so electrification results are candidates to check, not recommendations.
 - Heat pump cost and annual budget are assumptions you can change in the sidebar.
 
 Created by {CREATOR}. Built with public data only. Not an official DPU or utility analysis.

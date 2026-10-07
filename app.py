@@ -59,7 +59,8 @@ def name_street_types(seg):
 
 # ---------------------------------------------------------------- data
 @st.cache_data(show_spinner="Loading street data...")
-def load_data():
+def load_data(data_version):
+    """data_version changes whenever the data files change, so the cache reloads new data automatically."""
     seg = gpd.read_file(SEG_FILE)
     seg["has_dead_end_data"] = "dead_end" in seg.columns
     if "dead_end" not in seg.columns:
@@ -142,7 +143,8 @@ if not os.path.exists(SEG_FILE):
              "then start the app from the project folder.")
     st.stop()
 
-df, summary, gsep = load_data()
+data_version = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (SEG_FILE, SUMMARY_FILE, GSEP_FILE))
+df, summary, gsep = load_data(data_version)
 default_cpm = summary.get("cost_per_mile_usd", 3.06e6)
 # Lifetime customer cost per $1 of GSEP capital. DPU's GSEP Working Group (minutes, Oct 20, 2023) reported that
 # $15.9B of projected GSEP capital spending (2022-2039) would cost ratepayers $34.4B once returns and financing are included.

@@ -75,10 +75,13 @@ def load_data():
     return df, summary, gsep
 
 
-def hp_lifetime_factor(life_years, horizon=60, discount=0.03):
-    """Present value of buying a heat pump now plus replacements over the pipe's horizon."""
-    n = math.ceil(horizon / life_years)
-    return sum(1 / (1 + discount) ** (k * life_years) for k in range(n))
+PIPE_LIFE_YEARS = 60
+
+
+def hp_lifetime_factor(life_years, horizon=PIPE_LIFE_YEARS):
+    """Heat pump purchases over the life of new pipe, pro-rated (60 years / 18-year life = 3.33 purchases).
+    Undiscounted, to match DPU's lifetime ratio for pipe, which sums customer payments without discounting."""
+    return horizon / life_years
 
 
 def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget):
@@ -181,13 +184,49 @@ with st.sidebar:
                                     f"depreciation. Used only when comparing by lifetime cost. "
                                     f"Default \\${default_mult:.2f}. Source: {mult_source}.")
         hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18, disabled=(basis != "Lifetime cost to customers"),
-                            help="Used only for lifetime cost: replacements over a 60-year pipe life, discounted at 3%.")
+                            help="Used only for lifetime cost: the number of heat pumps bought over a 60-year pipe life (60 ÷ lifespan), counted without discounting so it matches how DPU's pipe ratio is calculated.")
     st.divider()
     st.caption(f"Created by {CREATOR}")
 
 actions, years, plan, stats = triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget_m * 1e6)
 df["action"] = df["seg_id"].map(actions)
 df["plan_year"] = df["seg_id"].map(years)
+basis_short = "lifetime" if basis == "Lifetime cost to customers" else "capital"
+
+st.info("**Disclaimer:** this is a simplified, independent analysis built on public data, not an official DPU "
+        "or utility analysis. Results show where the balance lies under the stated assumptions, not a final answer.")
+with st.expander("How the comparison works, and what it leaves out"):
+    st.markdown(f"""
+For each flagged street segment, both options solve the same problem: **the leak-prone pipe under that street stops
+being a risk, and the homes still get heat.**
+
+- **Option A, replace:** lay new pipe; the homes stay on gas.
+- **Option B, electrify:** convert every home on the street to heat pumps, so the old pipe can be retired.
+
+Both are priced for the same stretch of street, in dollars, so the comparison is valid as a question.
+
+**What's different (where it's not quite apples to apples)**
+
+The two costs scale differently, which is the point of the comparison, not a flaw:
+
+- Pipe cost scales with **length**: miles × \\${cost_per_mile / 1e6:.2f} million per mile.
+- Heat pump cost scales with the **number of homes**: homes × \\${hp_cost:,.0f}.
+
+But the scopes aren't equally complete:
+
+| | Replace pipe | Electrify |
+|---|---|---|
+| **Included** | Main, service lines to each building, excavation, paving (DPU all-in figure) | Heat pump equipment and installation |
+| **Left out** | Future leak repairs on the new pipe | Electrical panel upgrades, weatherization, capping and retiring the old pipe |
+| **Lifespan** | Many decades | Heat pumps need replacing every 15 to 20 years |
+| **Monthly bills** | Not counted | Not counted (electric heat can cost households more or less than gas) |
+| **Who pays** | Gas customers through rates, with utility return | Homeowners, with rebates partly funded by ratepayers |
+| **Network** | Fits the existing system | Only possible if the whole street can come off gas |
+
+**Other limits:** which streets have leak-prone pipe is estimated from building age, not utility pipe or leak
+records; housing counts for apartment buildings are estimates; and the cost per mile is a statewide average.
+Because items are left out on both sides, the net direction of these omissions is uncertain.
+""")
 
 tab_overview, tab_map, tab_types, tab_methods = st.tabs(["Findings", "Triage plan", "Street types", "Methods and sources"])
 
@@ -245,8 +284,8 @@ with tab_map:
     m = st.columns(4)
     m[0].metric("Replace or repair", f"{stats['flagged_miles'] - stats['electrify_miles']:,.0f} mi")
     m[1].metric("Electrify homes", f"{stats['electrify_miles']:,.0f} mi")
-    m[2].metric("Replace everything", money(stats["all_replace"]))
-    m[3].metric("Mixed plan", money(stats["mixed"]), f"{-saved:.0%}", delta_color="inverse")
+    m[2].metric(f"Replace everything ({basis_short})", money(stats["all_replace"]))
+    m[3].metric(f"Mixed plan ({basis_short})", money(stats["mixed"]), f"{-saved:.0%}", delta_color="inverse")
 
     nbhds = ["All neighborhoods"] + sorted(df["NBHD_L"].dropna().unique())
     pick = st.selectbox("Neighborhood", nbhds)

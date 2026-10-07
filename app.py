@@ -63,7 +63,7 @@ def load_data():
     seg = gpd.read_file(SEG_FILE)
     seg["has_dead_end_data"] = "dead_end" in seg.columns
     if "dead_end" not in seg.columns:
-        seg["dead_end"] = True   # no network data saved: behaves as before
+        seg["dead_end"] = False  # no network data saved: the rule is switched off and the column is hidden
     for c in ["likely_leak_prone", "is_ej", "dead_end"]:
         seg[c] = seg[c].astype(bool)
     if "miles" not in seg:
@@ -207,6 +207,7 @@ actions, years, plan, stats = triage(df, cost_per_mile, hp_cost, mult, basis, hp
 df["action"] = df["seg_id"].map(actions)
 df["plan_year"] = df["seg_id"].map(years)
 basis_short = "lifetime" if basis == "Lifetime cost to customers" else "capital"
+action_label = f"Lower-cost option ({basis_short} cost)"
 
 st.info("**Disclaimer:** this is a simplified, independent analysis built on public data, not an official DPU "
         "or utility analysis. Results show where the balance lies under the stated assumptions, not a final answer.")
@@ -333,12 +334,38 @@ with tab_map:
             x=alt.X("miles:Q", title="Flagged street miles"),
             color=alt.Color("action:N", title=None, scale=alt.Scale(domain=list(hex_colors), range=list(hex_colors.values())),
                             legend=alt.Legend(orient="bottom")),
-            tooltip=[alt.Tooltip("NBHD_L:N", title="Neighborhood"), alt.Tooltip("action:N", title="Action"),
+            tooltip=[alt.Tooltip("NBHD_L:N", title="Neighborhood"), alt.Tooltip("action:N", title=action_label),
                      alt.Tooltip("miles:Q", title="Miles", format=",.1f")]
         ).properties(title="Recommended action on flagged streets, by neighborhood",
                      height=max(220, 26 * len(order))), width="stretch")
     else:
         st.info("No flagged streets in this neighborhood.")
+
+    st.subheader("Overview of flagged streets")
+    ov_src = plan.reset_index()
+    if pick != "All neighborhoods":
+        ov_src = ov_src[ov_src["NBHD_L"] == pick]
+    if len(ov_src):
+        if has_dead_end_data:
+            ov_src["Street type"] = np.where(ov_src["dead_end"], "Dead-end street", "Through street")
+        else:
+            ov_src["Street type"] = "All streets"
+        overview = (ov_src.groupby(["action", "Street type"])
+                          .agg(Segments=("miles", "size"), Miles=("miles", "sum"), Homes=("res_units", "sum"),
+                               **{"Capital cost ($M)": ("capital_cost", lambda x: x.sum() / 1e6)})
+                          .reset_index()
+                          .rename(columns={"action": action_label}))
+        total = pd.DataFrame([{action_label: "All flagged streets", "Street type": "",
+                               "Segments": overview["Segments"].sum(), "Miles": overview["Miles"].sum(),
+                               "Homes": overview["Homes"].sum(),
+                               "Capital cost ($M)": overview["Capital cost ($M)"].sum()}])
+        overview = pd.concat([overview, total], ignore_index=True)
+        st.dataframe(overview.style.format({"Segments": "{:,.0f}", "Miles": "{:,.1f}", "Homes": "{:,.0f}",
+                                            "Capital cost ($M)": "{:,.1f}"}),
+                     hide_index=True, width="stretch")
+        if has_dead_end_data:
+            st.caption("Through streets carry gas on to other streets, so their pipe can't be retired by electrifying "
+                       "one block. Dead-end streets are where retiring the pipe is at least possible.")
 
     st.subheader("Priority list")
     table = (plan.reset_index()
@@ -346,9 +373,18 @@ with tab_map:
                          cost=lambda d: d["capital_cost"].round(-3))
                  [["plan_year", "street", "NBHD_L", "action", "miles", "homes", "med_yr_built", "cost", "is_ej", "dead_end"]]
                  .rename(columns={"plan_year": "Year", "street": "Street", "NBHD_L": "Neighborhood",
-                                  "action": "Action", "miles": "Miles", "homes": "Homes",
+                                  "action": action_label, "miles": "Miles", "homes": "Homes",
                                   "med_yr_built": "Building year", "cost": "Capital cost ($)", "is_ej": "EJ area",
                                   "dead_end": "Dead-end street"}))
+    if not has_dead_end_data:
+        table = table.drop(columns="Dead-end street")
+    else:
+        show = st.radio("Show", ["All flagged streets", "Dead-end streets only", "Through streets only"],
+                        horizontal=True, label_visibility="collapsed")
+        if show == "Dead-end streets only":
+            table = table[table["Dead-end street"]]
+        elif show == "Through streets only":
+            table = table[~table["Dead-end street"]]
     if pick != "All neighborhoods":
         table = table[table["Neighborhood"] == pick]
     st.dataframe(table.round({"Miles": 3}), width="stretch", height=320, hide_index=True)

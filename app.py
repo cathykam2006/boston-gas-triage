@@ -61,7 +61,10 @@ def name_street_types(seg):
 @st.cache_data(show_spinner="Loading street data...")
 def load_data():
     seg = gpd.read_file(SEG_FILE)
-    for c in ["likely_leak_prone", "is_ej"]:
+    seg["has_dead_end_data"] = "dead_end" in seg.columns
+    if "dead_end" not in seg.columns:
+        seg["dead_end"] = True   # no network data saved: behaves as before
+    for c in ["likely_leak_prone", "is_ej", "dead_end"]:
         seg[c] = seg[c].astype(bool)
     if "miles" not in seg:
         seg["miles"] = seg["length_m"] / 1609.34
@@ -84,7 +87,7 @@ def hp_lifetime_factor(life_years, horizon=PIPE_LIFE_YEARS):
     return horizon / life_years
 
 
-def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget):
+def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget, dead_end_only=True):
     seg = df.drop_duplicates("seg_id").set_index("seg_id")
     s = seg[seg["likely_leak_prone"]].copy()
     s["replace_capital"] = s["miles"] * cost_per_mile
@@ -96,6 +99,8 @@ def triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget):
         replace_cmp, electrify_cmp = s["replace_capital"], s["electrify_capital"]
 
     eligible = (s["n_large_bldgs"] == 0) & (s["res_units"] > 0)
+    if dead_end_only:
+        eligible &= s["dead_end"]   # retiring pipe only makes sense where no one further along still needs gas
     s["electrify"] = eligible & (electrify_cmp < replace_cmp)
     s["action"] = np.where(s["electrify"], "Electrify homes (non-pipe alternative)", "Replace or repair pipe")
     s["compared_cost"] = np.where(s["electrify"], electrify_cmp, replace_cmp)
@@ -164,6 +169,14 @@ with st.sidebar:
                           "replacements over 60 years.")
     hp_cost = st.slider("Heat pump cost per home (\\$)", 10_000, 45_000, int(summary.get("hp_cost_per_unit_usd", 22_000)),
                         step=1_000, help="Typical whole-home air-source install is about \\$22,000, including installation labor (Mass Save program average).")
+    has_dead_end_data = bool(df["has_dead_end_data"].iloc[0])
+    dead_end_only = st.toggle("Only allow electrification on dead-end streets", value=True,
+                              disabled=not has_dead_end_data,
+                              help="A gas main can only be retired if no customers further along it still use gas. "
+                                   "With this on, electrification is considered only on dead-end branches of the street "
+                                   "network, where the pipe doesn't carry gas on to other streets.")
+    if not has_dead_end_data:
+        st.caption("Dead-end data not found: run Part 3, Cells 5 and 6 and redeploy to enable this rule.")
     budget_m = st.slider("Annual budget for Boston streets (\\$M)", 25, 300, int(summary.get("annual_budget_usd", 100e6) / 1e6), step=25)
     with st.expander("Advanced"):
         cost_per_mile = st.number_input("All-in replacement cost per mile of main (\\$)", 1_000_000, 8_000_000,
@@ -188,7 +201,9 @@ with st.sidebar:
     st.divider()
     st.caption(f"Created by {CREATOR}")
 
-actions, years, plan, stats = triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget_m * 1e6)
+dead_end_rule = dead_end_only and has_dead_end_data
+actions, years, plan, stats = triage(df, cost_per_mile, hp_cost, mult, basis, hp_life, budget_m * 1e6,
+                                     dead_end_only=dead_end_rule)
 df["action"] = df["seg_id"].map(actions)
 df["plan_year"] = df["seg_id"].map(years)
 basis_short = "lifetime" if basis == "Lifetime cost to customers" else "capital"
@@ -229,7 +244,9 @@ household beyond that point still uses gas, the main has to stay in service, so 
 how few homes are on the street itself. This analysis prices each street segment on its own and cannot see how pipes
 connect, so every "Electrify homes" result is a candidate to check against the utility's network maps, not a
 recommendation. Electrification is only realistic where an entire branch of the network, such as a dead-end street,
-could come off gas together.
+could come off gas together. By default, the app therefore allows electrification only on dead-end branches of the
+street network (a setting in the sidebar). Dead-end streets usually, but not always, mean dead-end gas mains, since
+utilities sometimes loop mains through easements.
 
 **Other limits:** which streets have leak-prone pipe is estimated from building age, not utility pipe or leak
 records; housing counts for apartment buildings are estimates; and the cost per mile is a statewide average.
@@ -251,6 +268,11 @@ with tab_overview:
 
     st.subheader("What the analysis shows")
     replace_share = 1 - stats["electrify_miles"] / stats["flagged_miles"] if stats["flagged_miles"] else 0
+    network_note = ("Electrification is limited to dead-end streets, since a main can be retired only if no customers "
+                    "further along the network still use gas; even these are candidates to check, not recommendations."
+                    if dead_end_rule else
+                    "These are candidates only: a main can be retired only if no customers further along the network "
+                    "still use gas.")
     st.markdown(
         f"- On streets with more than about **{stats['breakeven_per_100m']:.1f} homes per 100 m**, new pipe costs "
         f"less than electrifying every home.\n"
@@ -260,7 +282,7 @@ with tab_overview:
         f"- Electrification is a **niche option**: cheaper on about {stats['electrify_miles']:,.0f} miles, home to "
         f"roughly {stats['electrify_homes']:,.0f} households, mostly ({stats['ej_share']:.0%} of those miles) in "
         f"environmental-justice neighborhoods, where program costs and renter issues would need careful handling. "
-        f"These are candidates only: a main can be retired only if no customers further along the network still use gas.\n"
+        f"{network_note}\n"
         f"- Prioritizing streets by risk per dollar lets a fixed budget address the highest-risk pipe first: at "
         f"**\\${budget_m}M a year**, all flagged streets are addressed in about **{stats['years']} years**.\n"
         f"- Networked geothermal: still waiting for pilot cost data before it can be evaluated."
@@ -322,10 +344,11 @@ with tab_map:
     table = (plan.reset_index()
                  .assign(street=lambda d: d["street"], homes=lambda d: d["res_units"].round(0),
                          cost=lambda d: d["capital_cost"].round(-3))
-                 [["plan_year", "street", "NBHD_L", "action", "miles", "homes", "med_yr_built", "cost", "is_ej"]]
+                 [["plan_year", "street", "NBHD_L", "action", "miles", "homes", "med_yr_built", "cost", "is_ej", "dead_end"]]
                  .rename(columns={"plan_year": "Year", "street": "Street", "NBHD_L": "Neighborhood",
                                   "action": "Action", "miles": "Miles", "homes": "Homes",
-                                  "med_yr_built": "Building year", "cost": "Capital cost ($)", "is_ej": "EJ area"}))
+                                  "med_yr_built": "Building year", "cost": "Capital cost ($)", "is_ej": "EJ area",
+                                  "dead_end": "Dead-end street"}))
     if pick != "All neighborhoods":
         table = table[table["Neighborhood"] == pick]
     st.dataframe(table.round({"Miles": 3}), width="stretch", height=320, hide_index=True)

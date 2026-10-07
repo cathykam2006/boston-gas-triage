@@ -31,10 +31,11 @@ In 2025, DPU cut the program's spending cap and directed utilities to consider c
 
 1. **About 351 miles of Boston streets are likely on leak-prone pipe.** Replacing all of it at the latest statewide cost would take about **$1.07 billion** in capital.
 2. **The tipping point is about 8.6 homes per 100 meters of street** (139 homes per mile). Below that density, buying heat pumps for every home costs less than new pipe, at about $22,000 per home.
-3. **Few of Boston's oldest streets fall below it.** Only **35 of the 351 miles** (about 2,800 homes) are cheaper to electrify. Most of the oldest streets are dense triple-decker and rental neighborhoods with about 19 homes per 100 m, so a mixed plan saves only about **4%** over replacing everything.
-4. **78% of the streets where electrification wins are in environmental-justice neighborhoods**, so any program there needs income-qualified support and protections for renters.
-5. **Large-building gas use is highly concentrated.** Among 5,580 large buildings reporting to the city, the top 10% use **73%** of the gas, and multifamily housing is the biggest user.
-6. **For dense streets, the realistic alternative to new pipe is a shared system**, such as networked geothermal, where one loop serves many homes. This matches National Grid's decision to keep its Franklin Field geothermal pilot in Dorchester, which serves multifamily public housing. But right now, since it is a pilot, we have very little useful data points to evaluate its practicality. 
+3. **On cost alone, about 35 of the 351 flagged miles** (about 2,800 homes) would be cheaper to electrify. Most of Boston's oldest streets are dense triple-decker and rental neighborhoods with about 19 homes per 100 m, well above the tipping point.
+4. **Once the gas network is considered, only about 3.5 miles remain.** A gas main can only be retired if no customers further along it still use gas. Of the 35 cost-alone miles, only 3.5 are on dead-end streets (about 270 homes); the other 31.2 are through streets that carry gas onward. That leaves electrification as a candidate on about 1% of flagged miles, and targeted replacement as the lower-cost option on the rest.
+5. **78% of the 35 cost-alone miles are in environmental-justice neighborhoods**, so any program there would need income-qualified support and protections for renters.
+6. **Large-building gas use is highly concentrated.** Among 5,580 large buildings reporting to the city, the top 10% use **73%** of the gas, and multifamily housing is the biggest user.
+7. **Networked geothermal: still waiting for data.** Shared systems are often raised as an alternative for dense streets, but pilot cost data is not yet available, so this analysis does not evaluate them.
 
 ![Triage plan](figures/14_triage_plan.png)
 
@@ -98,7 +99,7 @@ A Streamlit app where anyone can:
 
 - **The risk score is provisional.** It is based on building age until street-level leak records are added.
 - **Costs are statewide averages.** Boston's dense urban streets may cost more per mile to replace.
-- **The gas network is not modeled.** Removing gas from one street can affect neighboring streets, one reason utilities have rejected alternative projects.
+- **The gas network is approximated.** Dead ends are identified from the City of Boston street network; dead-end streets usually, but not always, mean dead-end gas mains, so utility maps would need to confirm.
 - **Lifetime costs cut both ways.** New pipe costs customers about $2.16 for every $1 of capital once utility returns and financing are included (DPU working group figure), while heat pumps need replacing every 15 to 20 years.
 - **Two inputs are assumptions:** heat pump cost per home and the annual budget. Both can be changed in the app.
 

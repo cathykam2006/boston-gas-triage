@@ -5,6 +5,9 @@
 Created by **Cathy Kam** · Built entirely from public data
 
 🔗 **Live app:** [Open the interactive app](https://boston-gas-triage-kljspjcnsvm6y8pc8uv3sp.streamlit.app/)
+
+🎬 **One-minute story:** [Watch the animated walkthrough](https://claude.ai/artifact/PD3uwEsXNGmZqpsz9XKT6a)
+
 ---
 
 ## Why this project

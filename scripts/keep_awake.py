@@ -16,6 +16,7 @@ from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
 DEFAULT_URLS = [
+    "https://boston-gas-triage-kljspjcnsvm6y8pc8uv3sp.streamlit.app/",
     "https://ne-gas-forecast-zmi45pfx6pdyncuxxazxcq.streamlit.app/",
     "https://dpu-filing-assistant-6tsrcudhmux8mpakqcnlux.streamlit.app/",
 ]

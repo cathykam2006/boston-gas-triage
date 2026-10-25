@@ -1,47 +1,28 @@
-# Keeps the Streamlit Community Cloud app from going to sleep.
-# Every 6 hours, GitHub opens the app in a real (headless) browser, which counts as a visit.
-# If the app is already asleep, it clicks "Yes, get this app back up!" and waits for it to start.
-name: Keep Streamlit app awake
+# Keep the Streamlit apps awake. Community Cloud puts an app to sleep after 12 hours without
+# traffic; this visits each app every 6 hours in a headless browser and wakes it if needed.
+# Optional: set the repository variable APP_URLS (Settings -> Secrets and variables -> Actions ->
+# Variables) to a space-separated list of app links to override the defaults in the script.
+name: Keep Streamlit apps awake
 
 on:
   schedule:
-    - cron: "17 */6 * * *"     # every 6 hours (UTC); apps sleep after about 12 hours without a visit
-  workflow_dispatch:            # adds a "Run workflow" button on the Actions tab for testing
+    - cron: "23 */6 * * *"   # every 6 hours, at 23 minutes past
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   visit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
-      - name: Install Playwright
-        run: |
-          pip install playwright==1.47.0
-          python -m playwright install --with-deps chromium
-
-      - name: Visit the app
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install playwright==1.48.0
+      - run: python -m playwright install --with-deps chromium
+      - run: python scripts/keep_awake.py
         env:
-          APP_URLS: |
-            https://boston-gas-triage-kljspjcnsvm6y8pc8uv3sp.streamlit.app/
-        run: |
-          python - <<'PY'
-          import os, re
-          from playwright.sync_api import sync_playwright
-
-          urls = [u.strip() for u in os.environ["APP_URLS"].splitlines() if u.strip()]
-          with sync_playwright() as p:
-              browser = p.chromium.launch()
-              for url in urls:
-                  page = browser.new_page()
-                  page.goto(url, wait_until="domcontentloaded", timeout=120_000)
-                  page.wait_for_timeout(8_000)
-                  wake = page.get_by_role("button", name=re.compile("get this app back up", re.I))
-                  if wake.count() > 0:
-                      print(f"{url}: asleep, waking it up")
-                      wake.first.click()
-                      page.wait_for_timeout(90_000)     # give the app time to boot
-                  else:
-                      print(f"{url}: awake")
-                      page.wait_for_timeout(30_000)     # stay long enough to count as a visit
-                  page.close()
-              browser.close()
-          PY
+          APP_URLS: ${{ vars.APP_URLS }}

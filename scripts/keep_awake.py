@@ -19,6 +19,8 @@ DEFAULT_URLS = [
     "https://boston-gas-triage-kljspjcnsvm6y8pc8uv3sp.streamlit.app/",
     "https://ne-gas-forecast-zmi45pfx6pdyncuxxazxcq.streamlit.app/",
     "https://dpu-filing-assistant-6tsrcudhmux8mpakqcnlux.streamlit.app/",
+    "https://massachusetts-peak-electricity-demand-forecasting-jlapsnfvdheu.streamlit.app/",
+    "https://capstone-project-illuminado-retinal--image-classification-mpbt.streamlit.app/",
 ]
 WAKE = re.compile(r"get this app back up", re.I)
 LOAD_TIMEOUT = int(os.environ.get("LOAD_TIMEOUT", "300"))      # seconds to wait for a waking app

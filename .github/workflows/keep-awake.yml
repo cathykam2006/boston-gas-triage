@@ -1,0 +1,47 @@
+# Keeps the Streamlit Community Cloud app from going to sleep.
+# Every 6 hours, GitHub opens the app in a real (headless) browser, which counts as a visit.
+# If the app is already asleep, it clicks "Yes, get this app back up!" and waits for it to start.
+name: Keep Streamlit app awake
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"     # every 6 hours (UTC); apps sleep after about 12 hours without a visit
+  workflow_dispatch:            # adds a "Run workflow" button on the Actions tab for testing
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install Playwright
+        run: |
+          pip install playwright==1.47.0
+          python -m playwright install --with-deps chromium
+
+      - name: Visit the app
+        env:
+          APP_URLS: |
+            https://boston-gas-triage-kljspjcnsvm6y8pc8uv3sp.streamlit.app/
+        run: |
+          python - <<'PY'
+          import os, re
+          from playwright.sync_api import sync_playwright
+
+          urls = [u.strip() for u in os.environ["APP_URLS"].splitlines() if u.strip()]
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              for url in urls:
+                  page = browser.new_page()
+                  page.goto(url, wait_until="domcontentloaded", timeout=120_000)
+                  page.wait_for_timeout(8_000)
+                  wake = page.get_by_role("button", name=re.compile("get this app back up", re.I))
+                  if wake.count() > 0:
+                      print(f"{url}: asleep, waking it up")
+                      wake.first.click()
+                      page.wait_for_timeout(90_000)     # give the app time to boot
+                  else:
+                      print(f"{url}: awake")
+                      page.wait_for_timeout(30_000)     # stay long enough to count as a visit
+                  page.close()
+              browser.close()
+          PY

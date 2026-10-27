@@ -479,6 +479,19 @@ default_budget = int(max(10, round(default_crew * default_cpm / 1e6 / 5) * 5))
 st.title("Repair, replace, or retire?")
 st.markdown("Which of Boston's old gas streets should get new pipe, which could be sealed, and where could the pipe "
             "be retired instead? A street-by-street look built from public data.")
+st.markdown(
+    "**What this project aims to find out.** Massachusetts customers pay for replacing leak-prone gas pipe through "
+    "their gas bills, and the cost has risen fast: from about \\$1.3 million per mile of main in 2015 to about "
+    "\\$3.1 million in 2024. In 2025, regulators lowered the program's spending cap and asked utilities to look "
+    "harder at lower-cost options. This project asks, for every Boston street likely to sit on leak-prone pipe: "
+    "**what is the lowest-cost way to make it safe, and how sure can we be?**\n\n"
+    "It compares three options on equal terms: **replace** the pipe, **seal** its joints from inside, or "
+    "**electrify** the homes so the pipe can be retired. Each street's costs are weighed against the real-world "
+    "limits that affect them: whether the gas main serves other streets, whether every property owner would agree, "
+    "how long each option takes, and how much work crews can do each year. The result is a year-by-year plan, an "
+    "estimate of its total cost compared with replacing everything, and a map of where the cost comparison is "
+    "clear-cut and where it's a close call."
+)
 st.caption(f"Created by **{CREATOR}**")
 
 with st.sidebar:

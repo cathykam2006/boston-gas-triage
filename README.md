@@ -1,6 +1,6 @@
 # Repair, Replace, or Retire? Boston Gas Pipe Triage
 
-**A street-by-street analysis of Boston's leak-prone gas mains: where the old pipe likely is, and whether replacing it, sealing it, or retiring it in favor of heat pumps or networked geothermal costs less, once the gas network, owner consent, timing, and crew capacity are counted.**
+**A street-by-street analysis of Boston's leak-prone gas mains: where the old pipe likely is, and whether replacing it, sealing it, or retiring it in favor of heat pumps costs less, once the gas network, owner consent, timing, and crew capacity are counted.**
 
 Created by **Cathy Kam** · Built entirely from public data
 
@@ -24,7 +24,7 @@ Since 2015, Massachusetts has paid to replace them through the **Gas System Enha
 
 In 2025, DPU cut the program's spending cap and directed utilities to consider cheaper repairs and **non-pipe alternatives**, such as electrifying the homes on a street instead of laying new gas pipe. Yet of 500 alternative projects the utilities reviewed for 2026, none were judged viable.
 
-**This project asks, for every flagged street in Boston: which way of making it safe costs least, and how firm is that answer?** It compares five options on equal terms (replace the pipe, seal its joints, electrify the homes, connect them to networked geothermal, or repair and monitor) and is meant to stay neutral between them.
+**This project asks, for every flagged street in Boston: which way of making it safe costs least, and how firm is that answer?** It compares three options on equal terms (replace the pipe, seal its joints, or electrify the homes) and is meant to stay neutral between them.
 
 | Money spent per year | Miles replaced per year |
 |---|---|
@@ -41,11 +41,10 @@ All figures use the app's default settings (capital cost, central estimates).
 3. **On cost alone, electrification wins on about 33 of the 351 miles** (about 2,560 homes). The typical old street with homes has about 18 homes per 100 m, and 82% of that mileage sits above the tipping point.
 4. **The gas network narrows this sharply.** A main can only be retired if no customer further along still uses gas. About 93% of flagged miles are through streets. Of the 33 cost-alone miles, about **1.5** are on dead-end branches that could come off gas as a unit.
 5. **Consent narrows it further.** Every property owner on a branch has to agree. The plan tries electrification on **39 short branches (1.3 miles, 110 homes, 99 owners)**; with an average 39% chance that everyone agrees, about **0.5 miles** is expected to come off gas.
-6. **Networked geothermal** is cheaper than new pipe on 2.8 miles on cost alone, at Framingham pilot prices (about $111,000 per customer), but isn't chosen on any branch at the defaults.
-7. **Pipe work is the lower-cost option on most streets:** replacement on 259 miles and joint sealing on 90 miles of major roads. The plan's expected cost is **$1.02 billion, 5% less** than replacing everything. At $50M a year and 17 crew-miles, falling with DPU's spending cap, it takes about **28 years**, highest-risk streets first.
-8. **Most choices are firm, and the close calls are where pilots would help most.** With cost ranges of ±20% (replace) to ±50% (geothermal), choices hold on 349 miles. On **62 dead-end branches (2.2 miles)**, pipe work and electrification could swap places; these are listed in the app as pilot candidates.
-9. **Equity:** 92% of the miles where electrification is attempted are in environmental-justice neighborhoods, so any program there would need income-qualified support and protections for renters.
-10. **Large-building gas use is highly concentrated.** Among 5,580 large buildings reporting to the city, the top 10% use **73%** of the gas.
+6. **Pipe work is the lower-cost option on most streets:** replacement on 259 miles and joint sealing on 90 miles of major roads. The plan's expected cost is **$1.02 billion, 5% less** than replacing everything. At $50M a year and 17 crew-miles, falling with DPU's spending cap, it takes about **28 years**, highest-risk streets first.
+7. **Most choices are firm, and the close calls are where pilots would help most.** With cost ranges of ±20% (replace), ±30% (electrify), and ±40% (seal), choices hold on 349 miles. On **62 dead-end branches (2.2 miles)**, pipe work and electrification could swap places; these are listed in the app as pilot candidates.
+8. **Equity:** 92% of the miles where electrification is attempted are in environmental-justice neighborhoods, so any program there would need income-qualified support and protections for renters.
+9. **Large-building gas use is highly concentrated.** Among 5,580 large buildings reporting to the city, the top 10% use **73%** of the gas.
 
 ![Map of flagged streets by lower-cost option](figures/15_triage_map.png)
 
@@ -91,7 +90,7 @@ Buildings were placed on streets by matching each address to the segment whose h
 - **Street segmentation (k-means clustering).** Streets were grouped into six types using building age, housing density, large-building gas use, gas heat share, renter share, income, and heat pump share.
 - **Leak-prone risk score.** Streets were ranked by building age, with the share flagged calibrated to the leak-prone share of Boston Gas's mains reported by DPU (34%). A gradient-boosting model is built in and switches on automatically when leak records are added, then is tested on a held-out year.
 - **The gas network** (`network_units.py`). The full city street network (19,440 segments) is turned into a graph. Dead-end branches are found by peeling off dead ends repeatedly, then whole branches are grouped together. A branch is treated as connected if a dead end comes within 30 m of another street (a possible easement or path) or sits at the city line. Of 1,875 dead-end branches, 1,127 could come off gas as a unit. Connected segments of the same street become one construction project.
-- **Five options per street.** Replace; seal joints and replace later (major roads only, discounted); electrify; networked geothermal; or repair and monitor. Alternatives are decided for a whole dead-end branch, at an expected cost that includes the chance every owner agrees, the pipe work needed if anyone declines, and leak repairs during the lead time.
+- **Three options per street.** Replace; seal joints and replace later (major roads only, discounted); or electrify. Electrification is decided for a whole dead-end branch, at an expected cost that includes the chance every owner agrees, the pipe work needed if anyone declines, and leak repairs during the lead time.
 - **A schedule, not a ranking.** Work is placed year by year within both the budget and crew capacity, highest-risk 10% first, with the budget following DPU's falling cap.
 - **Uncertainty and readiness.** Each option has a cost range, wider where there is less real-world data, and a readiness rating. The model reports which choices are close calls within those ranges. Options can be compared at central estimates or all at their high estimates, and the same rule applies to every option.
 - **Horizon and financing.** Under lifetime cost, the analysis horizon and credit for remaining asset life can be changed, and heat pumps can be financed through rates like pipe, so that differences in how options are paid for don't decide the comparison.
@@ -100,7 +99,7 @@ Buildings were placed on streets by matching each address to the segment whose h
 
 A Streamlit app where anyone can:
 
-- Change every assumption: heat pump and geothermal cost, consent rates, lead times, sealing, budget, crew capacity, cost ranges, horizon, and financing
+- Change every assumption: heat pump cost, consent rates, lead times, sealing, budget, crew capacity, cost ranges, horizon, and financing
 - See a live map of every flagged street, colored by lower-cost option, network position, plan year, or pilot candidates, with hover details and a neighborhood filter
 - Follow the funnel from cost alone to what's realistic, and see how firm each choice is
 - Browse the readiness table, the year-by-year schedule, and the pilot candidates
@@ -159,7 +158,7 @@ The notebooks rebuild everything from scratch: run Part 1, then Part 2, then Par
 - Massachusetts DPU, *Report to the Legislature on the Prevalence of Natural Gas Leaks*, D.P.U. 25-GLR-01 (December 31, 2025)
 - Massachusetts DPU, GSEP Working Group meeting minutes (October 20, 2023) and GSEP orders (April 30, 2025)
 - Joint sealing: ENR and ULC Technologies (Con Edison and Cadent examples)
-- Networked geothermal: Eversource Framingham pilot and National Grid Lowell pilot
+- Owner consent rate: Eversource Framingham networked geothermal pilot
 - OpenStreetMap contributors (map background)
 - City of Boston Open Data: Boston Street Segments (SAM), FY2026 Property Assessment, Building Emissions Reduction and Disclosure Ordinance (BERDO) reporting
 - U.S. Census Bureau: American Community Survey 5-year estimates (summary file) and TIGERweb block group boundaries

@@ -99,7 +99,8 @@ Buildings were placed on streets by matching each address to the segment whose h
 
 A Streamlit app where anyone can:
 
-- Change every assumption: heat pump cost, consent rates, lead times, sealing, budget, crew capacity, cost ranges, horizon, and financing
+- Change every assumption: heat pump cost, consent rates, lead times, sealing, budget, crew capacity, cost ranges, horizon, and financing, with the source of every default shown under it (or marked as an assumption)
+- Look up any term in a plain-language glossary, from "tipping point" to "pilot candidate"
 - See a live map of every flagged street, colored by lower-cost option, network position, plan year, or pilot candidates, with hover details and a neighborhood filter
 - Follow the funnel from cost alone to what's realistic, and see how firm each choice is
 - Browse the readiness table, the year-by-year schedule, and the pilot candidates

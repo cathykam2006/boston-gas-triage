@@ -13,6 +13,7 @@ import altair as alt
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 st.set_page_config(page_title="Boston gas pipe triage", page_icon="🔥", layout="wide")
@@ -146,6 +147,42 @@ def load_data(data_version):
     summary = json.load(open(SUMMARY_FILE)) if os.path.exists(SUMMARY_FILE) else {}
     gsep = pd.read_csv(GSEP_FILE).sort_values("year") if os.path.exists(GSEP_FILE) else None
     return df, summary, gsep
+
+
+@st.cache_data(show_spinner="Loading street map...")
+def load_geometry(data_version):
+    """Street lines for the map: one row per segment with its longitudes and latitudes (lightly simplified)."""
+    seg = gpd.read_file(SEG_FILE, columns=["seg_id"]).drop_duplicates("seg_id")
+    if seg.crs is not None and seg.crs.to_epsg() != 4326:
+        seg = seg.to_crs(4326)
+    seg = seg[seg.geometry.notna() & ~seg.geometry.is_empty]
+    geom = seg.geometry.simplify(0.00002)
+    lons, lats = [], []
+    for g in geom:
+        parts = list(g.geoms) if g.geom_type.startswith("Multi") else [g]
+        xs, ys = [], []
+        for part in parts:
+            cx, cy = part.xy
+            xs += list(cx) + [None]
+            ys += list(cy) + [None]
+        lons.append(xs)
+        lats.append(ys)
+    return pd.DataFrame({"seg_id": seg["seg_id"].values, "lon": lons, "lat": lats}).set_index("seg_id")
+
+
+def map_traces(rows, geo, name, color, width, hover=True, opacity=1.0):
+    """One map line trace for a group of segments, joined with gaps so it draws fast."""
+    rows = rows[rows["seg_id"].isin(geo.index)]
+    lon, lat, text = [], [], []
+    for sid, label in zip(rows["seg_id"], rows["hover"] if hover else [""] * len(rows)):
+        xs, ys = geo.at[sid, "lon"], geo.at[sid, "lat"]
+        lon += xs
+        lat += ys
+        text += [label] * len(xs)
+    return go.Scattermap(lon=lon, lat=lat, mode="lines", name=f"{name} ({rows['miles'].sum():,.1f} mi)",
+                         line=dict(color=color, width=width), opacity=opacity,
+                         text=text if hover else None, hoverinfo="text" if hover else "skip",
+                         connectgaps=False)
 
 
 def hp_lifetime_factor(life_years, horizon=PIPE_LIFE_YEARS):
@@ -751,6 +788,69 @@ with tab_map:
     nbhds = ["All neighborhoods"] + sorted(df["NBHD_L"].dropna().unique())
     pick = st.selectbox("Neighborhood", nbhds)
     view = plan if pick == "All neighborhoods" else plan[plan["NBHD_L"] == pick]
+
+    st.subheader("Map")
+    color_by = st.radio("Color streets by", ["Lower-cost option", "Network position", "Plan year",
+                                             "Pilot candidates"], horizontal=True, key="map_color")
+    geo = load_geometry(data_version)
+    mv = view.copy()
+    yr = mv["plan_year"].map(lambda y: "deferred" if pd.isna(y) else f"year {int(y)}")
+    mv["hover"] = (mv["street"].fillna("") + ", " + mv["NBHD_L"].fillna("").str.title() + "<br>"
+                   + mv["action"] + " · " + yr + "<br>" + mv["network_position"]
+                   + "<br>" + mv["res_units"].fillna(0).round(0).astype(int).astype(str) + " homes")
+    traces = []
+    context = df[~df["likely_leak_prone"]]
+    if pick != "All neighborhoods":
+        context = context[context["NBHD_L"] == pick]
+    traces.append(map_traces(context.assign(hover=""), geo, "Not flagged", "#C9CFD4", 1, hover=False,
+                             opacity=0.7))
+    if color_by == "Lower-cost option":
+        short = {REPLACE: "Replace pipe", SEAL: "Seal joints", ELECTRIFY: "Electrify (attempt)",
+                 GEO: "Geothermal (attempt)", DEFER: "Repair and monitor"}
+        groups = [(short[a], mv[mv["action"] == a], ACTION_COLORS[a], 4 if a in (ELECTRIFY, GEO) else 2.5)
+                  for a in ACTION_COLORS]
+    elif color_by == "Network position":
+        pos_colors = {"Through street": ("Through street", "#3B6E8F"),
+                      "Dead-end branch that could come off gas": ("Dead end, could come off gas", "#27AE60"),
+                      "Dead end that may connect (easement or path)": ("Dead end, may connect", "#E67E22"),
+                      "Dead end at the city line": ("Dead end at city line", "#8E44AD")}
+        groups = [(n, mv[mv["network_position"] == k], c, 2.5 if k == "Through street" else 4)
+                  for k, (n, c) in pos_colors.items()]
+    elif color_by == "Plan year":
+        bins = [("Years 1-2", 1, 2, "#7B1F1F"), ("Years 3-5", 3, 5, "#C0392B"), ("Years 6-10", 6, 10, "#E67E22"),
+                ("Years 11-20", 11, 20, "#F1C40F"), ("Year 21 on", 21, 999, "#7FA7C9")]
+        groups = [(n, mv[mv["plan_year"].between(a, b)], c, 2.5) for n, a, b, c in bins]
+        groups.append(("Deferred", mv[mv["plan_year"].isna()], "#B9C2CA", 2.5))
+    else:
+        close_ids = branches.index[branches["close"]] if len(branches) else []
+        is_close = mv["branch_id"].isin(close_ids)
+        groups = [("Other flagged streets", mv[~is_close], "#9AA7B1", 2),
+                  ("Pilot candidates", mv[is_close], "#D35400", 5)]
+    for name, rows, color, width in groups:
+        if len(rows):
+            traces.append(map_traces(rows, geo, name, color, width))
+    if len(mv):
+        pts = geo.loc[geo.index.intersection(mv["seg_id"])]
+        all_lon = [x for xs in pts["lon"] for x in xs if x is not None]
+        all_lat = [y for ys in pts["lat"] for y in ys if y is not None]
+        center = dict(lon=float(np.mean(all_lon)), lat=float(np.mean(all_lat)))
+        zoom = 10.6 if pick == "All neighborhoods" else 12.6
+    else:
+        center, zoom = dict(lon=-71.07, lat=42.32), 10.6
+    fig = go.Figure(traces)
+    # The base style is built in, so the streets always draw; the CARTO background tiles load behind them
+    # when the viewer's browser can reach CARTO (and the streets still show if it can't).
+    fig.update_layout(map=dict(style="white-bg", center=center, zoom=zoom, layers=[dict(
+                          below="traces", sourcetype="raster", sourceattribution="© CARTO, © OpenStreetMap contributors",
+                          source=["https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+                                  "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+                                  "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"])]),
+                      height=600, margin=dict(l=0, r=0, t=70, b=0),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0))
+    st.plotly_chart(fig, key="triage_map", config={"scrollZoom": True, "displaylogo": False})
+    st.caption("Drag to pan, scroll or pinch to zoom, and hover over a street for details. Click a legend entry to "
+               "hide or show it. Grey streets aren't flagged as likely leak-prone. Pick a neighborhood above to "
+               "zoom in. Map tiles © CARTO, © OpenStreetMap contributors.")
 
     by_nbhd = view.groupby(["NBHD_L", "action"], as_index=False)["miles"].sum()
     if len(by_nbhd):

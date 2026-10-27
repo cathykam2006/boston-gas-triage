@@ -5,3 +5,4 @@ geopandas
 shapely
 pyogrio
 altair
+plotly>=5.24

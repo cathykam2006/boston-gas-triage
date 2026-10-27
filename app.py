@@ -33,6 +33,8 @@ ELECTRIFY = "Electrify homes (if every owner agrees)"
 GEO = "Networked geothermal (if every owner agrees)"
 DEFER = "Repair and monitor (deferred)"
 ACTION_COLORS = {REPLACE: "#3B6E8F", SEAL: "#7FA7C9", ELECTRIFY: "#27AE60", GEO: "#8E44AD", DEFER: "#B9C2CA"}
+SHOWN_ACTIONS = [REPLACE, SEAL, ELECTRIFY]     # options compared in the app (geothermal and repair-and-monitor are
+                                               # switched off below; the model code still supports them)
 
 TYPE_COLORS = {
     "Older owner-occupied neighborhoods": [230, 126, 34],
@@ -76,11 +78,7 @@ READINESS = [
                      "street and retired its main",
      "How well the cost is known": "Heat pump installs well documented; panel, grid, and main-retirement costs "
                                    "not included"},
-    {"Option": GEO, "Readiness": "Pilot stage",
-     "Track record": "Framingham pilot connected its first customers in 2024; National Grid canceled its Lowell pilot",
-     "How well the cost is known": f"Two public data points: about ${FRAMINGHAM_COST_USD / FRAMINGHAM_CUSTOMERS:,.0f} "
-                                   f"and ${LOWELL_COST_USD / LOWELL_CUSTOMERS:,.0f} per customer"},
-    {"Option": DEFER, "Readiness": "Standard practice",
+    {"Option": "Repair leaks while streets wait", "Readiness": "Standard practice",
      "Track record": "Leak survey and repair are required by state law",
      "How well the cost is known": "Repair costs documented by DPU; how fast leaks grow on old pipe is uncertain"},
 ]
@@ -484,14 +482,71 @@ st.markdown("Which of Boston's old gas streets should get new pipe, which could 
 st.caption(f"Created by **{CREATOR}**")
 
 with st.sidebar:
+    with st.expander("📖 What the terms mean", expanded=False):
+        st.markdown("""
+**Leak-prone pipe.** Old gas mains made of cast iron or bare steel, which are more likely to leak.
+
+**Flagged / not flagged.** Flagged streets are the ones most likely to sit on leak-prone pipe, judged by the age of
+their buildings. Not flagged streets (light grey on the map) are less likely to, but this isn't confirmed.
+
+**Replace pipe.** Dig up the street and lay a new gas main.
+
+**Seal joints.** A robot travels inside a large old main and seals the joints from inside, which delays
+replacement by about 20 years. Only used under major roads.
+
+**Electrify homes.** Every home on the street switches to electric heat pumps, and the old gas main is shut off.
+
+**Tipping point.** How many homes per 100 meters of street (about one block) it takes before new pipe costs less
+than heat pumps for every home. Fewer homes favor heat pumps; more homes favor new pipe.
+
+**Through street.** A street whose gas main carries gas on to other streets, so it can't be shut off.
+
+**Dead-end branch.** A cul-de-sac, or a group of streets that joins the rest of the network at one point. Nothing
+lies beyond it, so its gas main could be shut off without cutting off anyone else.
+
+**Chance all agree.** A main can only be shut off if every property owner on the branch agrees to give up gas.
+This is the estimated chance that all of them say yes.
+
+**Lead time.** The years needed to arrange an alternative (outreach, agreements, installation) before the old
+main can be shut off. Leaks are repaired in the meantime.
+
+**Expected cost.** The likely cost once the chance that an owner says no is included. If anyone declines, the
+street gets new pipe instead, and that cost counts too.
+
+**Capital cost vs. lifetime cost.** Capital cost is the upfront price. Lifetime cost is what customers pay over
+the years, including the utility's financing and replacing heat pumps as they wear out.
+
+**Cost range (±%).** How far each option's real cost might be from the estimate. Wider for options with less
+real-world experience.
+
+**Firm choice.** A street where the same option wins anywhere within the cost ranges.
+
+**Close call.** A street where a different option could win if costs turn out higher or lower than estimated.
+
+**Pilot candidate.** A dead-end branch that is a close call. A trial project there, with real costs and real
+sign-ups, would show which option is better, there and on similar streets.
+
+**Readiness.** How proven an option is, from widely used to still in pilots.
+
+**Highest risk.** The riskiest 10% of flagged streets, which are fixed first with pipe work.
+
+**EJ area.** An environmental-justice neighborhood, as defined by the state based on income, race, and language.
+
+**GSEP.** The Gas System Enhancement Program, the state program since 2015 that pays to replace leak-prone pipe
+through gas bills.
+
+**DPU.** The Massachusetts Department of Public Utilities, which regulates gas utilities.
+""")
+
     st.header("Assumptions")
     basis = st.radio("Compare costs by", ["Capital cost", LIFETIME],
-                     help="Lifetime cost adds the utility's return and financing on pipe and geothermal, and heat "
+                     help="Lifetime cost adds the utility's return and financing on pipe, and heat "
                           "pump replacements, over the analysis horizon (60 years unless changed under Advanced).")
     hp_cost = st.slider("Heat pump cost per home (\\$)", 10_000, 45_000, int(summary.get("hp_cost_per_unit_usd", 22_000)),
                         step=1_000, help="Default \\$22,000, close to MassCEC's whole-home heat pump pilot average "
                                          "for existing homes (\\$21,479, 2020). A 2023 memo for MassDEP puts the "
                                          "average at \\$26,402 (range \\$16,000-36,000). See the sources below.")
+    st.caption("Default \\$22,000. Source: MassCEC whole-home heat pump pilot, existing homes, 2020 (\\$21,479); a 2023 memo for MassDEP gives \\$26,402 on average.")
 
     with st.expander("Pipe options"):
         seal_on = st.toggle("Consider joint sealing", value=True,
@@ -500,67 +555,71 @@ with st.sidebar:
         seal_frac = st.slider("Sealing cost (% of replacement)", 5, 60, 25, step=5, disabled=not seal_on,
                               help="Con Edison example: \\$400,000 instead of \\$1.5-1.8 million (about 25%). "
                                    "Industry reports cite about 10%.") / 100
+        st.caption("Default 25%. Source: Con Edison job reported by ULC Technologies (\\$400,000 vs. \\$1.5-1.8M); ENR reports about 10%.")
         seal_life = st.slider("Years sealing adds before replacement", 10, 50, 20, disabled=not seal_on,
                               help="Massachusetts law counts advanced leak repair that adds at least 10 years; "
                                    "the sealant is lab-tested to 50 years.")
+        st.caption("Default 20 years. Assumption, between the 10-year minimum in state law and the sealant's 50-year lab test (ENR).")
         discount = st.slider("Discount rate (%)", 0.0, 7.0, 3.0, step=0.5,
                              help="Values money spent later at less than money spent now. Federal guidance "
                                   "(OMB Circular A-4) uses 2% to 7%. At 0%, sealing never pays off, because "
                                   "the replacement still comes later.") / 100
+        st.caption("Default 3%. Source: federal guidance, OMB Circular A-4 (2% to 7%).")
         repair_cost = st.slider("Leak repair cost per mile per year (\\$)", 1_000, 50_000,
                                 int(round(REPAIR_PER_MILE_YEAR, -2)), step=500,
-                                help=f"Used while streets wait for their turn, during lead times, and for deferred "
-                                     f"streets. Default: about {NEW_LEAKS_PER_MILE:.1f} new leaks per mile of "
+                                help=f"Used while streets wait for their turn and during lead times. Default: about {NEW_LEAKS_PER_MILE:.1f} new leaks per mile of "
                                      f"leak-prone pipe a year × about \\${COST_PER_LEAK:,.0f} per repair (DPU figures). "
                                      f"A low estimate: it leaves out leak surveys and emergency repairs.")
-        monitor_share = st.slider("Repair and monitor the lowest-risk share instead (%)", 0, 50, 0, step=5,
-                                  help="These streets keep their old pipe, with leaks repaired as found, instead "
-                                       "of being fixed within the plan.") / 100
+        st.caption(f"Default about \\${round(REPAIR_PER_MILE_YEAR, -2):,.0f}. Source: DPU, D.P.U. 25-GLR-01 and April 2025 GSEP orders (about {NEW_LEAKS_PER_MILE:.1f} new leaks per mile a year × about \\${COST_PER_LEAK:,.0f} per repair).")
+        monitor_share = 0.0                     # repair-and-monitor option not offered in the app
 
     with st.expander("Alternatives to new pipe"):
-        geo_on = st.toggle("Consider networked geothermal", value=True)
-        geo_cost = st.slider("Geothermal cost per customer (\\$)", 30_000, 250_000,
-                             int(round(GEO_COST_PER_CUSTOMER, -3)), step=5_000, disabled=not geo_on,
-                             help="Framingham pilot: about \\$15 million for about 135 customers, including the "
-                                  "heat pumps in each building. A second phase is expected to cost less.")
+        geo_on, geo_cost = False, round(GEO_COST_PER_CUSTOMER, -3)    # geothermal not offered in the app
         p_owner = st.slider("Chance an owner-occupant agrees (%)", 30, 100, 80, step=5,
-                            help="About 80% of homeowners along the Framingham pilot route joined, with the "
-                                 "conversion paid for and a \\$10 monthly charge, so this is optimistic.") / 100
+                            help="About 80% of homeowners along the route of Eversource's Framingham pilot joined, "
+                                 "with the conversion paid for and a \\$10 monthly charge, so this is optimistic.") / 100
+        st.caption("Default 80%. Source: share of homeowners who joined along the route of Eversource's Framingham networked geothermal pilot.")
         p_landlord = st.slider("Chance a landlord agrees (%)", 10, 100, 60, step=5,
                                help="An assumption. Landlords decide for their tenants, and tenants usually pay "
                                     "the heating bills, so landlords gain less from converting.") / 100
+        st.caption("Default 60%. Assumption.")
         lead_e = st.slider("Years to arrange electrification", 1, 8, 3,
                            help="An assumption: outreach, agreements, installs, and retiring the main.")
-        lead_g = st.slider("Years to arrange geothermal", 2, 10, 4,
-                           help="Framingham: approved by DPU in October 2020, first customers connected in 2024.")
+        st.caption("Default 3 years. Assumption.")
+        lead_g = 4
 
     with st.expander("Uncertainty and readiness"):
         rule = st.radio("Compare options at", [CENTRAL, CAUTIOUS],
                         help="Central estimate uses each option's most likely cost. High estimate puts every option "
                              "at the top of its own uncertainty range, so options whose costs are less well known "
                              "are held to a higher bar. The same rule applies to every option.")
-        st.caption("Cost uncertainty, plus or minus. These are assumptions, set wider where there is less "
-                   "real-world cost data. See the readiness table on the Findings tab.")
+        st.caption("Cost uncertainty, plus or minus. See the readiness table on the Findings tab.")
         unc_vals = {}
-        for a, label in [(REPLACE, "Replace pipe"), (SEAL, "Seal joints"), (ELECTRIFY, "Electrify homes"),
-                         (GEO, "Networked geothermal")]:
+        for a, label in [(REPLACE, "Replace pipe"), (SEAL, "Seal joints"), (ELECTRIFY, "Electrify homes")]:
             unc_vals[a] = st.slider(f"{label} (±%)", 0, 100, DEFAULT_UNCERTAINTY[a], step=5,
                                     key=f"unc_{a}")
+        unc_vals[GEO] = DEFAULT_UNCERTAINTY[GEO]
+        st.caption("Defaults: replace ±20%, seal ±40%, electrify ±30%. Assumptions, wider where there is less "
+                   "real-world cost data.")
 
     with st.expander("Schedule"):
         immediate_share = st.slider("Highest-risk share fixed first, with pipe work (%)", 0, 30, 10, step=5,
                                     help="These streets go to the front of the schedule and aren't held up "
                                          "for alternatives that take years to arrange.") / 100
+        st.caption("Default 10%. Assumption.")
         budget_m = st.slider("Annual budget for Boston streets (\\$M)", 10, 300, default_budget, step=5,
                              help=f"Default: crew capacity × cost per mile (about \\${default_budget}M).")
+        st.caption(f"Default \\${default_budget}M. Crew capacity × cost per mile.")
         crew_miles = st.slider("Crew capacity (miles of new pipe a year)", 5, 60, int(default_crew),
                                help=f"Default: Boston Gas planned {BOSTON_GAS_PLANNED_MILES_2025} miles in 2025 "
                                     f"across its territory; Boston's flagged streets are about "
                                     f"{flagged_total / BOSTON_GAS_LEAK_PRONE_MILES:.0%} of its leak-prone main. "
                                     f"Sealing a mile uses about a quarter of the crew time.")
+        st.caption(f"Default {int(default_crew)} miles. Source: Boston Gas planned {BOSTON_GAS_PLANNED_MILES_2025} miles in 2025 (D.P.U. 25-GLR-01) × Boston's share of its leak-prone main.")
         glide = st.toggle("Budget falls with DPU's spending cap", value=True,
                           help="DPU lowered the GSEP cap from 2.5% to 2% (2026) and 1.5% (2027 on) of revenue. "
                                "Year 2 gets 80% of year 1's budget, and later years 60%.")
+        st.caption("Source: DPU GSEP orders, April 30, 2025 (cap of 2.5%, then 2% in 2026 and 1.5% from 2027).")
 
     with st.expander("Advanced"):
         cost_per_mile = st.number_input("All-in replacement cost per mile of main (\\$)", 1_000_000, 8_000_000,
@@ -568,30 +627,34 @@ with st.sidebar:
                                         help=f"Total GSEP spending divided by miles of main replaced, statewide, "
                                              f"{summary.get('cost_year', 'latest')} actual from DPU's report. "
                                              f"Includes service lines, excavation, and paving restoration.")
+        st.caption(f"Default \\${default_cpm / 1e6:.2f}M. Source: DPU, D.P.U. 25-GLR-01: statewide GSEP spending ÷ miles of main replaced, {summary.get('cost_year', 2024)}.")
         if basis != LIFETIME:
-            st.caption("The two settings below apply only when **Compare costs by** is set to "
+            st.caption("The settings below, after cost per mile, apply only when **Compare costs by** is set to "
                        "**Lifetime cost to customers**.")
         mult = st.number_input("Lifetime customer cost per \\$1 of pipe capital", 1.0, 4.0, round(float(default_mult), 2),
                                step=0.05, disabled=(basis != LIFETIME),
                                help=f"How much gas customers pay over the life of new pipe for every \\$1 the utility "
                                     f"spends building it, including the utility's allowed return, financing, and "
                                     f"depreciation. Default \\${default_mult:.2f}. Source: {mult_source}.")
+        st.caption("Default \\$2.16. Source: DPU GSEP Working Group minutes, Oct 20, 2023 (\\$34.4B paid by customers for \\$15.9B of capital).")
         hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18, disabled=(basis != LIFETIME),
                             help="The number of heat pumps bought over a 60-year pipe life (60 ÷ lifespan), counted "
                                  "without discounting so it matches how DPU's pipe ratio is calculated.")
+        st.caption("Default 18 years. Assumption; EnergySage cites 10-15 years, or 20-25 with good maintenance.")
         horizon = st.slider("Analysis horizon (years)", 10, 60, PIPE_LIFE_YEARS, step=5,
                             disabled=(basis != LIFETIME),
                             help="How many years of costs are counted. Short horizons can miss the later costs "
                                  "and benefits of long-lived assets.")
+        st.caption("Default 60 years. Assumption: the life of new pipe.")
         credit_residual = st.toggle("Credit value left at the end of the horizon", value=True,
                                     disabled=(basis != LIFETIME),
                                     help="On: each asset is counted for the share of its life inside the horizon "
-                                         "(pipe and geothermal last about 60 years, heat pumps as set above). "
+                                         "(new pipe lasts about 60 years, heat pumps as set above). "
                                          "Off: every purchase counts in full, even if most of its life falls "
                                          "after the horizon.")
         hp_in_rates = st.toggle("Pay for heat pumps through rates, like pipe", value=False,
                                 disabled=(basis != LIFETIME),
-                                help="Utilities earn a return on pipe and geothermal, which customers pay over time. "
+                                help="Utilities earn a return on pipe, which customers pay over time. "
                                      "Heat pumps are usually paid upfront by owners and rebates. On: heat pumps get "
                                      "the same lifetime multiplier as pipe, so all options are financed the same way.")
     with st.expander("Where the default numbers come from"):
@@ -605,16 +668,10 @@ with st.sidebar:
   ([MassCEC, 2020](https://www.masscec.com/blog/september-whole-home-heat-pump-pilot-update-still-time-apply));
   a 2023 memo for MassDEP gives an average of \\$26,402, range \\$16,000-36,000
   ([Sustainable Energy Advantage and Synapse](https://www.mass.gov/doc/memo-on-heating-technology-costs-and-emissions/download)).
-- **Geothermal cost: \\${round(GEO_COST_PER_CUSTOMER, -3):,.0f} per customer.** Eversource Framingham pilot, about \\$15M for
-  about 135 customers, including heat pumps in each building
-  ([GCN](https://gcn.com/massachusetts-pilot-connects-135-homes-shared/22333)). For comparison, National Grid's
-  canceled Lowell pilot was \\$15.6M for 31 customers, about \\${round(LOWELL_COST_USD / LOWELL_CUSTOMERS, -3):,.0f} each
-  ([Banker & Tradesman](https://bankerandtradesman.com/national-grid-pulls-plug-on-residential-geothermal-pilot-in-lowell/)).
-- **Chance an owner-occupant agrees: 80%.** About 80% of homeowners along the Framingham pilot route joined
+- **Chance an owner-occupant agrees: 80%.** About 80% of homeowners along the route of Eversource's Framingham
+  networked geothermal pilot joined
   ([Eversource](https://www.eversource.com/residential/save-money-energy/clean-energy-options/geothermal-energy/geothermal-pilot-reference-guide)),
   with the conversion paid for, so likely optimistic.
-- **Years to arrange geothermal: 4.** Framingham was approved by DPU in October 2020 and connected its first
-  customers in 2024 (DPU GSEP Working Group minutes, Apr 12, 2023; pilot reports).
 - **Sealing cost: 25% of replacement.** Con Edison job, \\$400,000 instead of \\$1.5-1.8M
   ([ULC Technologies](https://ulctechnologies.com/services/cisbot-robotic-cast-iron-joint-sealing/)); ENR reports
   about 10% ([ENR](https://www.enr.com/articles/43945-joint-filling-robot-is-game-changer-for-gas-utilities)).
@@ -637,10 +694,9 @@ with st.sidebar:
   sealant is lab-tested to 50 years (ENR).
 - Heat pump lifespan: 18 years. Commonly cited ranges are 10-15 years, and 20-25 with good maintenance
   ([EnergySage](https://www.energysage.com/heat-pumps/how-long-do-heat-pumps-last/)).
-- Life of new pipe and geothermal loops, and the default horizon: 60 years.
+- Life of new pipe, and the default horizon: 60 years.
 - Highest-risk share fixed first: 10%.
-- Cost uncertainty: replace ±20%, seal ±40%, electrify ±30%, geothermal ±50%, wider where there is less real-world
-  cost data.
+- Cost uncertainty: replace ±20%, seal ±40%, electrify ±30%, wider where there is less real-world cost data.
 """)
     st.divider()
     st.caption(f"Created by {CREATOR}")
@@ -659,22 +715,20 @@ saved = 1 - stats["plan_cost"] / stats["all_replace"] if stats["all_replace"] el
 if not has_network:
     st.warning("Network data not found, so only pipe options are compared. Run network_units.py from your home "
                "folder, copy data_processed/segments_scored.geojson into the project, and redeploy to compare "
-               "electrification and geothermal on whole dead-end branches.")
+               "electrification on whole dead-end branches.")
 
 st.info("**Disclaimer:** this is a simplified, independent analysis built on public data, not an official DPU "
         "or utility analysis. Results show where the balance lies under the stated assumptions, not a final answer.")
 with st.expander("How the comparison works, and what it still leaves out"):
     st.markdown(f"""
 Every flagged street needs the same outcome: **the leak-prone pipe stops being a risk, and the homes still get heat.**
-The model compares five ways to get there.
+The model compares three ways to get there.
 
 | Option | What happens | Where it's allowed |
 |---|---|---|
 | **Replace pipe** | New main and service lines | Any flagged street |
 | **Seal joints, replace later** | Robots seal the joints of large cast-iron mains from inside; replacement is pushed back {seal_life} years | Major roads, where mains are likely 12 inches or larger |
 | **Electrify homes** | Every home switches to heat pumps; the old main is retired | Whole dead-end branches only, and only if every property owner agrees |
-| **Networked geothermal** | A shared ground loop heats every building; the old main is retired | Same as electrification |
-| **Repair and monitor** | Old pipe stays; leaks are repaired as found | Bridges the wait for every option; can replace fixing the lowest-risk streets (off by default) |
 
 **How the real-world constraints are handled**
 
@@ -687,7 +741,7 @@ The model compares five ways to get there.
   off gas only if **every property owner agrees**. The chance of that is computed from the number of owners and the
   renter share; landlords decide for tenants. If anyone declines, the pipe is replaced after all, and that cost is
   included.
-- **Timing.** Alternatives take {lead_e} years (electrification) or {lead_g} years (geothermal) to arrange, with leaks
+- **Timing.** Electrification takes {lead_e} years to arrange, with leaks
   repaired in the meantime. The highest-risk {immediate_share:.0%} of flagged miles goes first, with pipe work only.
   Hazardous (Grade 1) leaks are repaired as soon as possible under state law, whatever the plan says.
 - **Readiness and uncertainty.** Each option has a cost range, set wider where there is less real-world data (see
@@ -707,7 +761,7 @@ The model compares five ways to get there.
 | **Costs left out** | Future leak repairs on new pipe | Electrical panel and grid upgrades, weatherization, retiring the old main |
 | **Lifespan** | New pipe lasts decades | Heat pumps need replacing every 15 to 20 years (counted only under lifetime cost) |
 | **Monthly bills** | Not counted | Not counted |
-| **Who pays** | Gas customers through rates, with utility return | Homeowners and rebates; geothermal through rates |
+| **Who pays** | Gas customers through rates, with utility return | Homeowners and rebates |
 
 Also not modeled: actual pipe material, diameter, and age (estimated from building age and road type); the utility's
 real network maps (dead ends come from the street map); paving schedules, which aren't in the city's open data;
@@ -726,10 +780,10 @@ with tab_overview:
     c[1].metric("Tipping point (homes per 100 m)", f"{stats['breakeven_per_100m']:.1f}",
                 help="Cost alone: below this density, electrifying every home costs less than new pipe.")
     c[2].metric("Pipe expected to be retired", f"{stats['expected_retired']:,.1f} mi",
-                f"attempted on {m[ELECTRIFY] + m[GEO]:,.1f} mi", delta_color="off", **NO_ARROW,
+                f"attempted on {m[ELECTRIFY]:,.1f} mi", delta_color="off", **NO_ARROW,
                 help="Miles where an alternative is attempted, times the chance every property owner agrees.")
     c[3].metric("Years to finish", f"{stats['years']}",
-                help="Years until every flagged street (except any deferred) is addressed, within the budget "
+                help="Years until every flagged street is addressed, within the budget "
                      "and crew capacity.")
 
     st.markdown(tipping_point_visual(stats["breakeven_per_100m"]), unsafe_allow_html=True)
@@ -738,9 +792,8 @@ with tab_overview:
     if len(branches):
         att = branches[branches["choice"] != "gas"]
         exp_e = (att.loc[att["choice"] == ELECTRIFY, "P"] * att.loc[att["choice"] == ELECTRIFY, "mf"]).sum()
-        exp_g = (att.loc[att["choice"] == GEO, "P"] * att.loc[att["choice"] == GEO, "mf"]).sum()
     else:
-        exp_e = exp_g = np.nan
+        exp_e = np.nan
     funnel = pd.DataFrame({
         "Step": ["1. Cheaper on cost alone, street by street",
                  "2. ...and the whole dead-end branch could come off gas",
@@ -748,10 +801,8 @@ with tab_overview:
                  "4. ...expected to be retired (times the chance every owner agrees)"],
         "Electrify homes (miles)": [stats["cost_alone_e"], stats["network_e"],
                                     m[ELECTRIFY] if has_network else np.nan, exp_e],
-        "Networked geothermal (miles)": [stats["cost_alone_g"], stats["network_g"],
-                                         m[GEO] if has_network else np.nan, exp_g],
     })
-    st.dataframe(funnel.style.format({"Electrify homes (miles)": "{:,.1f}", "Networked geothermal (miles)": "{:,.1f}"},
+    st.dataframe(funnel.style.format({"Electrify homes (miles)": "{:,.1f}"},
                                      na_rep="n/a"), hide_index=True, width="stretch")
     if not has_network:
         st.caption("Steps 2 to 4 need the network data (network_units.py).")
@@ -763,12 +814,12 @@ with tab_overview:
                  help="Major-road miles where sealing and replacement could swap places within their cost ranges.")
     f1[1].metric("Pipe vs. alternative: close calls", f"{stats['alt_close_miles']:,.1f} mi",
                  f"{stats['alt_close_branches']} dead-end branches", delta_color="off", **NO_ARROW,
-                 help="Dead-end branches that could come off gas, where pipe work and electrification or "
-                      "geothermal could swap places within their cost ranges.")
+                 help="Dead-end branches that could come off gas, where pipe work and electrification "
+                      "could swap places within their cost ranges.")
     f1[2].metric("Firm choices", f"{stats['flagged_miles'] - stats['seal_close_miles'] - stats['alt_close_miles']:,.0f} mi",
                  help="Flagged miles where the choice holds anywhere within the cost ranges set in the sidebar.")
     st.caption(f"Choices use {rule_note}. Cost ranges: replace ±{unc_vals[REPLACE]}%, seal ±{unc_vals[SEAL]}%, "
-               f"electrify ±{unc_vals[ELECTRIFY]}%, geothermal ±{unc_vals[GEO]}%, set under Uncertainty and "
+               f"electrify ±{unc_vals[ELECTRIFY]}%, set under Uncertainty and "
                f"readiness. Close calls are where better cost data, for example from pilots, would most change the plan. "
                f"The Triage plan tab lists them as pilot candidates.")
     with st.expander(f"How proven is each option? (reviewed {READINESS_REVIEWED})"):
@@ -777,14 +828,6 @@ with tab_overview:
                    "that are less proven get wider cost ranges by default, and the same rules apply to all of them.")
 
     st.subheader("What the analysis shows")
-    geo_line = (f"- **Networked geothermal** costs about \\${geo_cost:,.0f} per customer at pilot prices, so it's "
-                f"cheaper than new pipe on only {stats['cost_alone_g']:,.1f} miles even on cost alone"
-                + ((f", and it's chosen on {m[GEO]:,.1f} miles.\n" if m[GEO] > 0 else ", and it isn't chosen anywhere.\n")
-                   if has_network else ".\n")
-                if geo_on else "- Networked geothermal is switched off in the sidebar.\n")
-    defer_line = (f"- The lowest-risk {monitor_share:.0%} of flagged miles ({m[DEFER]:,.0f} miles) is repaired and "
-                  f"monitored instead, at about {md_money(stats['deferred_repairs_per_year'])} a year in leak repairs.\n"
-                  if monitor_share > 0 else "")
     st.markdown(
         f"- **Pipe work is the lower-cost option on about {pipe_miles / stats['flagged_miles']:.1%} of flagged "
         f"miles**: replacement on {m[REPLACE]:,.0f} miles and joint sealing on {m[SEAL]:,.0f} miles of major "
@@ -794,7 +837,7 @@ with tab_overview:
         + (f"After those checks, it's attempted on {m[ELECTRIFY]:,.1f} miles, and the pipe is expected to come out "
            f"on about {stats['expected_retired']:,.1f} miles (the average chance that every owner on a chosen "
            f"branch agrees is {stats['mean_P']:.0%}).\n" if has_network else "Run the network step to apply those checks.\n")
-        + geo_line + defer_line +
+        +
         f"- **Schedule:** the highest-risk {immediate_share:.0%} of flagged miles goes first. With "
         f"\\${budget_m}M a year" + (" (falling with DPU's cap)" if glide else "") + f" and crews for {crew_miles} "
         f"miles of new pipe a year, every flagged street is addressed in about **{stats['years']} years**. Leaks on "
@@ -828,8 +871,8 @@ with tab_overview:
 # ---------------- Triage plan
 with tab_map:
     m = stats["miles"]
-    t = st.columns(5)
-    for col, a in zip(t, ACTION_COLORS):
+    t = st.columns(len(SHOWN_ACTIONS))
+    for col, a in zip(t, SHOWN_ACTIONS):
         short = {REPLACE: "Replace", SEAL: "Seal joints", ELECTRIFY: "Electrify (attempt)",
                  GEO: "Geothermal (attempt)", DEFER: "Repair and monitor"}[a]
         col.metric(short, f"{m[a]:,.1f} mi")
@@ -856,8 +899,8 @@ with tab_map:
     if color_by == "Lower-cost option":
         short = {REPLACE: "Replace pipe", SEAL: "Seal joints", ELECTRIFY: "Electrify (attempt)",
                  GEO: "Geothermal (attempt)", DEFER: "Repair and monitor"}
-        groups = [(short[a], mv[mv["action"] == a], ACTION_COLORS[a], 4 if a in (ELECTRIFY, GEO) else 2.5)
-                  for a in ACTION_COLORS]
+        groups = [(short[a], mv[mv["action"] == a], ACTION_COLORS[a], 4 if a == ELECTRIFY else 2.5)
+                  for a in SHOWN_ACTIONS]
     elif color_by == "Network position":
         pos_colors = {"Through street": ("Through street", "#3B6E8F"),
                       "Dead-end branch that could come off gas": ("Dead end, could come off gas", "#27AE60"),
@@ -869,7 +912,6 @@ with tab_map:
         bins = [("Years 1-2", 1, 2, "#7B1F1F"), ("Years 3-5", 3, 5, "#C0392B"), ("Years 6-10", 6, 10, "#E67E22"),
                 ("Years 11-20", 11, 20, "#F1C40F"), ("Year 21 on", 21, 999, "#7FA7C9")]
         groups = [(n, mv[mv["plan_year"].between(a, b)], c, 2.5) for n, a, b, c in bins]
-        groups.append(("Deferred", mv[mv["plan_year"].isna()], "#B9C2CA", 2.5))
     else:
         close_ids = branches.index[branches["close"]] if len(branches) else []
         is_close = mv["branch_id"].isin(close_ids)
@@ -935,8 +977,7 @@ with tab_map:
                                             "Expected cost ($M)": "{:,.1f}"}),
                      hide_index=True, width="stretch")
         st.caption("Expected cost is the present value of the chosen option. For alternatives, it includes the chance "
-                   "that someone declines and the pipe is replaced after all, plus leak repairs during the lead time. "
-                   "Deferred streets are shown at their replacement cost.")
+                   "that someone declines and the pipe is replaced after all, plus leak repairs during the lead time.")
 
     st.subheader("Year by year")
     sched = plan[plan["plan_year"].notna()].copy()
@@ -971,7 +1012,6 @@ with tab_map:
             "Homes": cand["homes"].round(0), "Owners": cand["owners"],
             "Chance all agree (%)": (cand["P"] * 100).round(0),
             "Pipe work ($)": cand["gas"].round(-3), "Electrify ($)": cand["E"].round(-3),
-            "Geothermal ($)": cand["G"].round(-3) if geo_on else np.nan,
             "Lower-cost choice": cand["Lower-cost choice"], "Could swap with": cand["Could swap with"],
             "EJ area": np.where(cand["ej"].astype(bool), "Yes", "No")}).sort_values(["Chance all agree (%)", "Homes"], ascending=[False, True])
         st.dataframe(cand_tbl, hide_index=True, width="stretch", height=260)
@@ -1038,7 +1078,7 @@ When leak records are added, a gradient-boosting model replaces this score and i
 - **Replace:** miles × all-in cost per mile (\\${cost_per_mile / 1e6:.2f}M).
 - **Seal joints:** {seal_frac:.0%} of replacement now, plus replacement {seal_life} years later, discounted at
   {discount:.1%}. Only on major roads (road classes A1 to A3), as a stand-in for mains 12 inches and larger.
-- **Electrify:** homes × \\${hp_cost:,.0f}; **geothermal:** homes × \\${geo_cost:,.0f}. For a whole dead-end
+- **Electrify:** homes × \\${hp_cost:,.0f}. For a whole dead-end
   branch: expected cost = chance all agree × alternative + chance someone declines × pipe work + leak repairs during
   the lead time. A branch is eligible only if it could come off gas as a unit, has no large BERDO buildings, and isn't
   in the highest-risk tier.
@@ -1056,14 +1096,11 @@ When leak records are added, a gradient-boosting model replaces this score and i
 - DPU GSEP orders (April 30, 2025), as reported by State House News: 4,049 miles of leak-prone pipe remaining; cap
   of 2.5%, then 2% (2026) and 1.5% (2027).
 - DPU GSEP Working Group minutes (Oct 20, 2023): lifetime customer cost per \\$1 of GSEP capital (\\${default_mult:.2f}).
-  GSEP Working Group minutes (April 12, 2023): Framingham geothermal pilot approved October 2020.
 - Joint sealing: [ENR, "Joint-Filling Robot is Game-Changer for Gas Utilities"](https://www.enr.com/articles/43945-joint-filling-robot-is-game-changer-for-gas-utilities)
   (about one-tenth of replacement cost; sealant lab-tested to 50 years);
   [ULC Technologies](https://ulctechnologies.com/services/cisbot-robotic-cast-iron-joint-sealing/) (12-48 inch cast
   iron; Con Edison job \\$400,000 instead of \\$1.5-1.8 million; Cadent: 9 weeks instead of 9 months).
-- Networked geothermal: [Framingham pilot, about \\$15 million for about 135 customers](https://gcn.com/massachusetts-pilot-connects-135-homes-shared/22333);
-  [Lowell pilot canceled, \\$15.6 million for 31 customers](https://bankerandtradesman.com/national-grid-pulls-plug-on-residential-geothermal-pilot-in-lowell/);
-  [about 80% of homeowners along the Framingham route joined](https://www.eversource.com/residential/save-money-energy/clean-energy-options/geothermal-energy/geothermal-pilot-reference-guide).
+- Owner consent: [about 80% of homeowners along the route of Eversource's Framingham networked geothermal pilot joined](https://www.eversource.com/residential/save-money-energy/clean-energy-options/geothermal-energy/geothermal-pilot-reference-guide).
 - Discount rate: OMB Circular A-4 (2% to 7%).
 - Heat pump cost: [MassCEC whole-home pilot (2020)](https://www.masscec.com/blog/september-whole-home-heat-pump-pilot-update-still-time-apply);
   [memo for MassDEP by Sustainable Energy Advantage and Synapse (May 2023)](https://www.mass.gov/doc/memo-on-heating-technology-costs-and-emissions/download).
@@ -1073,8 +1110,7 @@ When leak records are added, a gradient-boosting model replaces this score and i
 - U.S. Census Bureau: ACS 5-year estimates and block group boundaries. MassGIS: 2020 Environmental Justice populations.
 
 **Assumptions without a direct source:** cost uncertainty for each option (replace ±{unc_vals[REPLACE]}%, seal
-±{unc_vals[SEAL]}%, electrify ±{unc_vals[ELECTRIFY]}%, geothermal ±{unc_vals[GEO]}%), the 60-year life used for
-geothermal, chance a landlord agrees ({p_landlord:.0%}), years to arrange
+±{unc_vals[SEAL]}%, electrify ±{unc_vals[ELECTRIFY]}%), the 60-year life of new pipe, chance a landlord agrees ({p_landlord:.0%}), years to arrange
 electrification ({lead_e}), the highest-risk share ({immediate_share:.0%}), the road classes used for sealing, and the
 30 m and 60 m distances in the network check. All are adjustable or stated.
 

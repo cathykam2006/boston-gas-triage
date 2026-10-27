@@ -56,6 +56,36 @@ REPAIR_PER_MILE_YEAR = COST_PER_LEAK * NEW_LEAKS_PER_MILE                       
 FRAMINGHAM_COST_USD, FRAMINGHAM_CUSTOMERS = 15_000_000, 135                    # Eversource Framingham pilot
 GEO_COST_PER_CUSTOMER = FRAMINGHAM_COST_USD / FRAMINGHAM_CUSTOMERS              # about $111,000
 SEAL_CREW_SHARE = 0.25            # joint sealing: 9 weeks instead of 9 months for the same main (ULC/Cadent)
+LOWELL_COST_USD, LOWELL_CUSTOMERS = 15_600_000, 31                             # National Grid Lowell pilot (canceled)
+
+# Readiness of each option: how proven it is, and how well its cost is known. Review this table as pilots report
+# results and update READINESS_REVIEWED.
+READINESS_REVIEWED = "October 2026"
+READINESS = [
+    {"Option": REPLACE, "Readiness": "Widely deployed",
+     "Track record": "Standard utility practice; GSEP replaced 2,411 miles statewide from 2015 to 2024",
+     "How well the cost is known": "Well documented in DPU reports, but a statewide average that rose from "
+                                   "$1.32M to $3.06M per mile from 2015 to 2024"},
+    {"Option": SEAL, "Readiness": "Commercially deployed elsewhere",
+     "Track record": "Robotic joint sealing used by Con Edison (New York) and Cadent (UK); little public data "
+                     "for Massachusetts",
+     "How well the cost is known": "A few public figures, about 10% to 25% of replacement"},
+    {"Option": ELECTRIFY, "Readiness": "Heat pumps widely deployed; retiring a main street-wide is rare",
+     "Track record": "Heat pumps are a mature product (Mass Save); few completed projects have converted a whole "
+                     "street and retired its main",
+     "How well the cost is known": "Heat pump installs well documented; panel, grid, and main-retirement costs "
+                                   "not included"},
+    {"Option": GEO, "Readiness": "Pilot stage",
+     "Track record": "Framingham pilot connected its first customers in 2024; National Grid canceled its Lowell pilot",
+     "How well the cost is known": f"Two public data points: about ${FRAMINGHAM_COST_USD / FRAMINGHAM_CUSTOMERS:,.0f} "
+                                   f"and ${LOWELL_COST_USD / LOWELL_CUSTOMERS:,.0f} per customer"},
+    {"Option": DEFER, "Readiness": "Standard practice",
+     "Track record": "Leak survey and repair are required by state law",
+     "How well the cost is known": "Repair costs documented by DPU; how fast leaks grow on old pipe is uncertain"},
+]
+# Cost uncertainty (plus or minus) for each option: an assumption, adjustable in the sidebar.
+DEFAULT_UNCERTAINTY = {REPLACE: 20, SEAL: 40, ELECTRIFY: 30, GEO: 50}
+CENTRAL, CAUTIOUS = "Central estimate", "High estimate for every option"
 
 
 def name_street_types(seg):
@@ -154,9 +184,19 @@ def schedule(units, budget, crew_cap, glide):
 def run_model(df, p):
     """Compare options for every flagged street, decide whole dead-end branches together, and schedule the work."""
     lifetime = p["basis"] == LIFETIME
-    k_pipe = p["mult"] if lifetime else 1.0                       # customer cost per $1 of utility capital
-    k_hp = hp_lifetime_factor(p["hp_life"]) if lifetime else 1.0  # heat pumps bought over the pipe's life
+    H, credit = p["horizon"], p["credit_residual"]
+    if lifetime:
+        # Costs counted over the analysis horizon. With credit for value left at the end, each asset is counted
+        # for the share of its life inside the horizon; without it, every purchase counts in full.
+        k_pipe = p["mult"] * (min(H, PIPE_LIFE_YEARS) / PIPE_LIFE_YEARS if credit else 1.0)
+        n_hp = H / p["hp_life"] if credit else math.ceil(H / p["hp_life"])
+        k_hp = n_hp * (p["mult"] if p["hp_in_rates"] else 1.0)
+    else:
+        k_pipe = k_hp = 1.0
     cpm, r = p["cost_per_mile"], p["discount"]
+    unc = {a: p["unc"][a] / 100 for a in DEFAULT_UNCERTAINTY}
+    # Decision rule: central estimates, or every option at the top of its own uncertainty range
+    hi = {a: (1 + unc[a]) if p["rule"] == CAUTIOUS else 1.0 for a in unc}
 
     f = df[df["likely_leak_prone"]].copy()
     total_miles = f["miles"].sum()
@@ -169,20 +209,38 @@ def run_model(df, p):
 
     # 2) Pipe options on every flagged segment: replace now, or seal joints now and replace later
     f["replace_capital"] = f["miles"] * cpm
-    f["R"] = f["replace_capital"] * k_pipe
+    f["R"] = f["replace_capital"] * k_pipe * hi[REPLACE]
     f["seal_ok"] = p["seal_on"] & f["CFCC"].str.match(r"^A[123]")
-    f["S"] = (p["seal_frac"] * f["replace_capital"] + f["replace_capital"] / (1 + r) ** p["seal_life"]) * k_pipe
+    f["S"] = (p["seal_frac"] * f["replace_capital"] * hi[SEAL]
+              + f["replace_capital"] * hi[REPLACE] / (1 + r) ** p["seal_life"]) * k_pipe
     use_seal = f["seal_ok"] & (f["S"] < f["R"])
     f["gas_action"] = np.where(use_seal, SEAL, REPLACE)
     f["gas_cost"] = np.where(use_seal, f["S"], f["R"])                       # compared, present value
     f["cost_now"] = np.where(use_seal, p["seal_frac"] * f["replace_capital"], f["replace_capital"])  # spent in plan
     f["crew"] = np.where(use_seal, SEAL_CREW_SHARE * f["miles"], f["miles"])
+    # Cost range of the chosen pipe option, for checking how firm each choice is. Sealing has two parts: the
+    # sealing itself (sealing range) and the later replacement (replacement range).
+    # (Ranges are always around central estimates, whichever decision rule is used.)
+    seal_part = p["seal_frac"] * f["replace_capital"] * k_pipe
+    later_part = f["replace_capital"] * k_pipe / (1 + r) ** p["seal_life"]
+    s_lo = seal_part * (1 - unc[SEAL]) + later_part * (1 - unc[REPLACE])
+    s_hi = seal_part * (1 + unc[SEAL]) + later_part * (1 + unc[REPLACE])
+    r_c = f["replace_capital"] * k_pipe
+    f["gas_lo"] = np.where(use_seal, s_lo, r_c * (1 - unc[REPLACE]))
+    f["gas_hi"] = np.where(use_seal, s_hi, r_c * (1 + unc[REPLACE]))
+    # Seal vs. replace: both include replacement, so only sealing now vs. the replacement it postpones can swap
+    a = p["seal_frac"]                                              # sealing, per $1 of replacement
+    b = 1 - 1 / (1 + r) ** p["seal_life"]                           # value of postponing replacement
+    seal_flip = (a * (1 - unc[SEAL]) < b * (1 + unc[REPLACE])) and (a * (1 + unc[SEAL]) > b * (1 - unc[REPLACE]))
+    f["seal_close"] = f["seal_ok"] & seal_flip
 
     # Cost alone, segment by segment, ignoring the network and consent (the old view, kept for comparison)
     can_convert = (f["res_units"] > 0) & (f["n_large_bldgs"] == 0)
     stats = {
-        "cost_alone_e": f.loc[can_convert & (f["res_units"] * p["hp_cost"] * k_hp < f["gas_cost"]), "miles"].sum(),
-        "cost_alone_g": f.loc[can_convert & (f["res_units"] * p["geo_cost"] * k_pipe < f["gas_cost"]), "miles"].sum()
+        "cost_alone_e": f.loc[can_convert & (f["res_units"] * p["hp_cost"] * k_hp * hi[ELECTRIFY] < f["gas_cost"]),
+                              "miles"].sum(),
+        "cost_alone_g": f.loc[can_convert & (f["res_units"] * p["geo_cost"] * k_pipe * hi[GEO] < f["gas_cost"]),
+                              "miles"].sum()
                         if p["geo_on"] else 0.0,
     }
 
@@ -203,12 +261,13 @@ def run_model(df, p):
                                           logp=("logp", "sum"), large=("n_large_bldgs", "sum"),
                                           iso=("branch_isolatable", "all"), branch_miles=("miles", "sum"))
         fb = f[f["branch_id"] >= 0].groupby("branch_id").agg(
-            mf=("miles", "sum"), gas=("gas_cost", "sum"), imm=("immediate", "any"))
+            mf=("miles", "sum"), gas=("gas_cost", "sum"), gas_lo=("gas_lo", "sum"), gas_hi=("gas_hi", "sum"),
+            imm=("immediate", "any"))
         B = B.join(fb, how="inner")
         B["P"] = np.exp(B["logp"])                       # chance every property owner on the branch agrees
         B["eligible"] = B["iso"] & (B["large"] == 0) & (B["homes"] > 0) & ~B["imm"]
-        B["E"] = B["homes"] * p["hp_cost"] * k_hp
-        B["G"] = B["homes"] * p["geo_cost"] * k_pipe
+        B["E"] = B["homes"] * p["hp_cost"] * k_hp * hi[ELECTRIFY]
+        B["G"] = B["homes"] * p["geo_cost"] * k_pipe * hi[GEO]
         B["E_exp"] = B["P"] * B["E"] + (1 - B["P"]) * B["gas"] + p["repair_cost"] * B["mf"] * p["lead_e"]
         B["G_exp"] = B["P"] * B["G"] + (1 - B["P"]) * B["gas"] + p["repair_cost"] * B["mf"] * p["lead_g"]
         if not p["geo_on"]:
@@ -218,6 +277,18 @@ def run_model(df, p):
         B["choice"] = best.map({"gas": "gas", "E_exp": ELECTRIFY, "G_exp": GEO})
         B["chosen_cost"] = B[["gas", "E_exp", "G_exp"]].min(axis=1)
         B["lead"] = np.where(B["choice"] == GEO, p["lead_g"], p["lead_e"])
+        # How firm is the choice? Within each option's cost range, could the alternative and pipe work swap places?
+        # (Only the uncertain parts move: the alternative's own cost, and the pipe work it would replace.)
+        # Compare pipe work with the better of the two alternatives on each branch.
+        e_best = B["E_exp"] <= B["G_exp"]
+        B["best_alt"] = np.where(e_best, ELECTRIFY, GEO)
+        A = np.where(e_best, B["E"] / hi[ELECTRIFY], B["G"] / hi[GEO])     # central estimate
+        u_a = np.where(e_best, unc[ELECTRIFY], unc[GEO])
+        rep_cost = p["repair_cost"] * B["mf"] * np.where(e_best, p["lead_e"], p["lead_g"])
+        alt_chosen = B["choice"] != "gas"
+        alt_could_win = B["P"] * A * (1 - u_a) + rep_cost < B["P"] * B["gas_hi"]
+        pipe_could_win = B["P"] * A * (1 + u_a) + rep_cost > B["P"] * B["gas_lo"]
+        B["close"] = B["eligible"] & np.isfinite(A) & np.where(alt_chosen, pipe_could_win, alt_could_win)
         stats["network_e"] = B.loc[B["eligible"] & (B["E"] < B["gas"]), "mf"].sum()
         stats["network_g"] = B.loc[B["eligible"] & (B["G"] < B["gas"]), "mf"].sum() if p["geo_on"] else 0.0
         branches = B
@@ -286,7 +357,7 @@ def run_model(df, p):
     by_action = f.groupby("action")["miles"].sum()
     stats.update({
         "flagged_miles": total_miles,
-        "breakeven_per_100m": cpm * k_pipe / (p["hp_cost"] * k_hp) / 16.0934,
+        "breakeven_per_100m": cpm * k_pipe * hi[REPLACE] / (p["hp_cost"] * k_hp * hi[ELECTRIFY]) / 16.0934,
         "miles": {a: by_action.get(a, 0.0) for a in ACTION_COLORS},
         "homes_alt": alt_rows["res_units"].sum(),
         "expected_retired": expected_retired, "attempted_owners": attempted_owners, "mean_P": mean_P,
@@ -297,6 +368,9 @@ def run_model(df, p):
         "immediate_miles": f.loc[f["immediate"], "miles"].sum(),
         "ej_share_alt": (alt_rows["miles"] * alt_rows["is_ej"]).sum() / max(alt_rows["miles"].sum(), 1e-9),
         "seal_eligible_miles": f.loc[f["seal_ok"], "miles"].sum(),
+        "seal_close_miles": f.loc[f["seal_close"] & f["action"].isin([REPLACE, SEAL]), "miles"].sum(),
+        "alt_close_miles": branches.loc[branches["close"], "mf"].sum() if len(branches) else 0.0,
+        "alt_close_branches": int(branches["close"].sum()) if len(branches) else 0,
     })
     return f, units, branches, stats
 
@@ -376,7 +450,7 @@ with st.sidebar:
     st.header("Assumptions")
     basis = st.radio("Compare costs by", ["Capital cost", LIFETIME],
                      help="Lifetime cost adds the utility's return and financing on pipe and geothermal, and heat "
-                          "pump replacements over 60 years.")
+                          "pump replacements, over the analysis horizon (60 years unless changed under Advanced).")
     hp_cost = st.slider("Heat pump cost per home (\\$)", 10_000, 45_000, int(summary.get("hp_cost_per_unit_usd", 22_000)),
                         step=1_000, help="Typical whole-home air-source install is about \\$22,000, including "
                                          "installation labor (published summaries of Mass Save program data).")
@@ -422,6 +496,19 @@ with st.sidebar:
         lead_g = st.slider("Years to arrange geothermal", 2, 10, 4,
                            help="Framingham: approved by DPU in October 2020, first customers connected in 2024.")
 
+    with st.expander("Uncertainty and readiness"):
+        rule = st.radio("Compare options at", [CENTRAL, CAUTIOUS],
+                        help="Central estimate uses each option's most likely cost. High estimate puts every option "
+                             "at the top of its own uncertainty range, so options whose costs are less well known "
+                             "are held to a higher bar. The same rule applies to every option.")
+        st.caption("Cost uncertainty, plus or minus. These are assumptions, set wider where there is less "
+                   "real-world cost data. See the readiness table on the Findings tab.")
+        unc_vals = {}
+        for a, label in [(REPLACE, "Replace pipe"), (SEAL, "Seal joints"), (ELECTRIFY, "Electrify homes"),
+                         (GEO, "Networked geothermal")]:
+            unc_vals[a] = st.slider(f"{label} (±%)", 0, 100, DEFAULT_UNCERTAINTY[a], step=5,
+                                    key=f"unc_{a}")
+
     with st.expander("Schedule"):
         immediate_share = st.slider("Highest-risk share fixed first, with pipe work (%)", 0, 30, 10, step=5,
                                     help="These streets go to the front of the schedule and aren't held up "
@@ -454,6 +541,21 @@ with st.sidebar:
         hp_life = st.slider("Heat pump lifespan (years)", 10, 30, 18, disabled=(basis != LIFETIME),
                             help="The number of heat pumps bought over a 60-year pipe life (60 ÷ lifespan), counted "
                                  "without discounting so it matches how DPU's pipe ratio is calculated.")
+        horizon = st.slider("Analysis horizon (years)", 10, 60, PIPE_LIFE_YEARS, step=5,
+                            disabled=(basis != LIFETIME),
+                            help="How many years of costs are counted. Short horizons can miss the later costs "
+                                 "and benefits of long-lived assets.")
+        credit_residual = st.toggle("Credit value left at the end of the horizon", value=True,
+                                    disabled=(basis != LIFETIME),
+                                    help="On: each asset is counted for the share of its life inside the horizon "
+                                         "(pipe and geothermal last about 60 years, heat pumps as set above). "
+                                         "Off: every purchase counts in full, even if most of its life falls "
+                                         "after the horizon.")
+        hp_in_rates = st.toggle("Pay for heat pumps through rates, like pipe", value=False,
+                                disabled=(basis != LIFETIME),
+                                help="Utilities earn a return on pipe and geothermal, which customers pay over time. "
+                                     "Heat pumps are usually paid upfront by owners and rebates. On: heat pumps get "
+                                     "the same lifetime multiplier as pipe, so all options are financed the same way.")
     st.divider()
     st.caption(f"Created by {CREATOR}")
 
@@ -461,7 +563,8 @@ params = dict(basis=basis, hp_cost=hp_cost, seal_on=seal_on, seal_frac=seal_frac
               discount=discount, repair_cost=repair_cost, monitor_share=monitor_share, geo_on=geo_on,
               geo_cost=geo_cost, p_owner=p_owner, p_landlord=p_landlord, lead_e=lead_e, lead_g=lead_g,
               immediate_share=immediate_share, budget=budget_m * 1e6, crew_miles=crew_miles, glide=glide,
-              cost_per_mile=cost_per_mile, mult=mult, hp_life=hp_life, has_network=has_network)
+              cost_per_mile=cost_per_mile, mult=mult, hp_life=hp_life, has_network=has_network,
+              rule=rule, unc=unc_vals, horizon=horizon, credit_residual=credit_residual, hp_in_rates=hp_in_rates)
 plan, units, branches, stats = run_model(df, params)
 basis_short = "lifetime" if basis == LIFETIME else "capital"
 action_label = f"Lower-cost option ({basis_short} cost)"
@@ -501,6 +604,12 @@ The model compares five ways to get there.
 - **Timing.** Alternatives take {lead_e} years (electrification) or {lead_g} years (geothermal) to arrange, with leaks
   repaired in the meantime. The highest-risk {immediate_share:.0%} of flagged miles goes first, with pipe work only.
   Hazardous (Grade 1) leaks are repaired as soon as possible under state law, whatever the plan says.
+- **Readiness and uncertainty.** Each option has a cost range, set wider where there is less real-world data (see
+  the readiness table). The same rule applies to every option: compare central estimates, or put every option at the
+  top of its own range. The app shows where choices are close calls, which is where pilots would add the most.
+- **Planning horizon and financing.** Under lifetime cost, the horizon sets how many years of costs are counted, and
+  long-lived assets can be credited for life left at the end. Heat pumps can be financed through rates like pipe, so
+  that differences in how each option is paid for don't decide the comparison.
 - **A schedule, not just a ranking.** Pipe work is bundled into street projects (connected segments of the same
   street in one neighborhood) and placed year by year within both the budget and crew capacity, with the budget
   falling in line with DPU's cap if that setting is on. Leaks on streets waiting their turn are repaired and costed.
@@ -561,6 +670,26 @@ with tab_overview:
     if not has_network:
         st.caption("Steps 2 to 4 need the network data (network_units.py).")
 
+    st.subheader("How firm are these choices?")
+    rule_note = ("every option at its high estimate" if rule == CAUTIOUS else "central estimates")
+    f1 = st.columns(3)
+    f1[0].metric("Seal vs. replace: close calls", f"{stats['seal_close_miles']:,.1f} mi",
+                 help="Major-road miles where sealing and replacement could swap places within their cost ranges.")
+    f1[1].metric("Pipe vs. alternative: close calls", f"{stats['alt_close_miles']:,.1f} mi",
+                 f"{stats['alt_close_branches']} dead-end branches", delta_color="off", **NO_ARROW,
+                 help="Dead-end branches that could come off gas, where pipe work and electrification or "
+                      "geothermal could swap places within their cost ranges.")
+    f1[2].metric("Firm choices", f"{stats['flagged_miles'] - stats['seal_close_miles'] - stats['alt_close_miles']:,.0f} mi",
+                 help="Flagged miles where the choice holds anywhere within the cost ranges set in the sidebar.")
+    st.caption(f"Choices use {rule_note}. Cost ranges: replace ±{unc_vals[REPLACE]}%, seal ±{unc_vals[SEAL]}%, "
+               f"electrify ±{unc_vals[ELECTRIFY]}%, geothermal ±{unc_vals[GEO]}%, set under Uncertainty and "
+               f"readiness. Close calls are where better cost data, for example from pilots, would most change the plan. "
+               f"The Triage plan tab lists them as pilot candidates.")
+    with st.expander(f"How proven is each option? (reviewed {READINESS_REVIEWED})"):
+        st.table(pd.DataFrame(READINESS).set_index("Option"))
+        st.caption("Readiness changes as pilots report results, so this table should be reviewed regularly. Options "
+                   "that are less proven get wider cost ranges by default, and the same rules apply to all of them.")
+
     st.subheader("What the analysis shows")
     geo_line = (f"- **Networked geothermal** costs about \\${geo_cost:,.0f} per customer at pilot prices, so it's "
                 f"cheaper than new pipe on only {stats['cost_alone_g']:,.1f} miles even on cost alone"
@@ -571,7 +700,7 @@ with tab_overview:
                   f"monitored instead, at about {md_money(stats['deferred_repairs_per_year'])} a year in leak repairs.\n"
                   if monitor_share > 0 else "")
     st.markdown(
-        f"- **Pipe work is the lower-cost option on about {pipe_miles / stats['flagged_miles']:.0%} of flagged "
+        f"- **Pipe work is the lower-cost option on about {pipe_miles / stats['flagged_miles']:.1%} of flagged "
         f"miles**: replacement on {m[REPLACE]:,.0f} miles and joint sealing on {m[SEAL]:,.0f} miles of major "
         f"roads, where large cast-iron mains are likely.\n"
         f"- **Electrification** is cheaper on cost alone on {stats['cost_alone_e']:,.1f} miles, but a main can only be "
@@ -679,6 +808,32 @@ with tab_map:
         st.caption("Alternatives are placed in the year their lead time ends; their pipe work happens only if "
                    "someone declines.")
 
+    st.subheader("Pilot candidates")
+    if len(branches) and branches["close"].any():
+        cand = branches[branches["close"]].copy()
+        names = plan[plan["branch_id"].isin(cand.index)].groupby("branch_id").agg(
+            Streets=("street", lambda x: ", ".join(sorted(set(x)))), Neighborhood=("NBHD_L", "first"),
+            ej=("is_ej", "max"))
+        cand = cand.join(names)
+        cand["Lower-cost choice"] = cand["choice"].map({"gas": "Pipe work", ELECTRIFY: "Electrify", GEO: "Geothermal"})
+        cand["Could swap with"] = np.where(cand["choice"] != "gas", "Pipe work",
+                                           cand["best_alt"].map({ELECTRIFY: "Electrify", GEO: "Geothermal"}))
+        cand_tbl = pd.DataFrame({
+            "Streets": cand["Streets"], "Neighborhood": cand["Neighborhood"].str.title(),
+            "Homes": cand["homes"].round(0), "Owners": cand["owners"],
+            "Chance all agree (%)": (cand["P"] * 100).round(0),
+            "Pipe work ($)": cand["gas"].round(-3), "Electrify ($)": cand["E"].round(-3),
+            "Geothermal ($)": cand["G"].round(-3) if geo_on else np.nan,
+            "Lower-cost choice": cand["Lower-cost choice"], "Could swap with": cand["Could swap with"],
+            "EJ area": np.where(cand["ej"].astype(bool), "Yes", "No")}).sort_values(["Chance all agree (%)", "Homes"], ascending=[False, True])
+        st.dataframe(cand_tbl, hide_index=True, width="stretch", height=260)
+        st.caption(f"{len(cand_tbl)} dead-end branches where the choice could go either way within the cost ranges. "
+                   "A pilot here, run jointly by the utility and technology providers, with results shared openly, "
+                   "would narrow the cost ranges and test consent. Costs are present value before the chance of "
+                   "consent and lead-time repairs.")
+    else:
+        st.caption("No dead-end branch is a close call at the current settings.")
+
     st.subheader("Priority list")
     table = view.assign(
         homes=view["res_units"].round(0),
@@ -765,9 +920,20 @@ When leak records are added, a gradient-boosting model replaces this score and i
 - City of Boston open data: street segments (SAM), FY2026 property assessment, BERDO building energy reporting.
 - U.S. Census Bureau: ACS 5-year estimates and block group boundaries. MassGIS: 2020 Environmental Justice populations.
 
-**Assumptions without a direct source:** chance a landlord agrees ({p_landlord:.0%}), years to arrange
+**Assumptions without a direct source:** cost uncertainty for each option (replace ±{unc_vals[REPLACE]}%, seal
+±{unc_vals[SEAL]}%, electrify ±{unc_vals[ELECTRIFY]}%, geothermal ±{unc_vals[GEO]}%), the 60-year life used for
+geothermal, chance a landlord agrees ({p_landlord:.0%}), years to arrange
 electrification ({lead_e}), the highest-risk share ({immediate_share:.0%}), the road classes used for sealing, and the
 30 m and 60 m distances in the network check. All are adjustable or stated.
+
+**What would reduce the uncertainty, for every option**
+- **Pilots with shared results.** Joint pilots by utilities and technology providers on close-call streets, with cost,
+  consent, and performance data kept in a shared public repository.
+- **Tracking readiness.** Reviewing the readiness table as pilots report, and narrowing cost ranges as data comes in.
+- **Regulatory clarity.** A regulatory sandbox for pilots would shorten lead times and reduce approval risk.
+- **Longer planning horizons.** Comparing options over the life of the assets, with credit for life left at the end.
+- **Aligned incentives.** Financing all options on the same basis, so that how an option is paid for doesn't drive
+  the choice.
 
 **Limits that remain**
 - The risk score is provisional until leak records are added.

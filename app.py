@@ -838,19 +838,18 @@ with tab_map:
     else:
         center, zoom = dict(lon=-71.07, lat=42.32), 10.6
     fig = go.Figure(traces)
-    # The base style is built in, so the streets always draw; the CARTO background tiles load behind them
-    # when the viewer's browser can reach CARTO (and the streets still show if it can't).
+    # The base style is built in, so the streets always draw; OpenStreetMap tiles (no key needed) load behind
+    # them, faded so the colored streets stand out, and the streets still show if the tiles can't load.
     fig.update_layout(map=dict(style="white-bg", center=center, zoom=zoom, layers=[dict(
-                          below="traces", sourcetype="raster", sourceattribution="© CARTO, © OpenStreetMap contributors",
-                          source=["https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-                                  "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-                                  "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"])]),
+                          below="traces", sourcetype="raster", opacity=0.55,
+                          sourceattribution="© OpenStreetMap contributors",
+                          source=["https://tile.openstreetmap.org/{z}/{x}/{y}.png"])]),
                       height=600, margin=dict(l=0, r=0, t=70, b=0),
                       legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0))
     st.plotly_chart(fig, key="triage_map", config={"scrollZoom": True, "displaylogo": False})
     st.caption("Drag to pan, scroll or pinch to zoom, and hover over a street for details. Click a legend entry to "
                "hide or show it. Grey streets aren't flagged as likely leak-prone. Pick a neighborhood above to "
-               "zoom in. Map tiles © CARTO, © OpenStreetMap contributors.")
+               "zoom in. Map data © OpenStreetMap contributors.")
 
     by_nbhd = view.groupby(["NBHD_L", "action"], as_index=False)["miles"].sum()
     if len(by_nbhd):

@@ -489,8 +489,9 @@ with st.sidebar:
                      help="Lifetime cost adds the utility's return and financing on pipe and geothermal, and heat "
                           "pump replacements, over the analysis horizon (60 years unless changed under Advanced).")
     hp_cost = st.slider("Heat pump cost per home (\\$)", 10_000, 45_000, int(summary.get("hp_cost_per_unit_usd", 22_000)),
-                        step=1_000, help="Typical whole-home air-source install is about \\$22,000, including "
-                                         "installation labor (published summaries of Mass Save program data).")
+                        step=1_000, help="Default \\$22,000, close to MassCEC's whole-home heat pump pilot average "
+                                         "for existing homes (\\$21,479, 2020). A 2023 memo for MassDEP puts the "
+                                         "average at \\$26,402 (range \\$16,000-36,000). See the sources below.")
 
     with st.expander("Pipe options"):
         seal_on = st.toggle("Consider joint sealing", value=True,
@@ -593,6 +594,54 @@ with st.sidebar:
                                 help="Utilities earn a return on pipe and geothermal, which customers pay over time. "
                                      "Heat pumps are usually paid upfront by owners and rebates. On: heat pumps get "
                                      "the same lifetime multiplier as pipe, so all options are financed the same way.")
+    with st.expander("Where the default numbers come from"):
+        st.markdown(f"""
+**Sourced**
+- **Cost per mile of new main: \\${default_cpm / 1e6:.2f}M.** Statewide GSEP spending ÷ miles of main replaced,
+  {summary.get('cost_year', 2024)} ([DPU, D.P.U. 25-GLR-01](https://malegislature.gov/Bills/194/SD3561.pdf)).
+- **Lifetime cost per \\$1 of pipe capital: \\${default_mult:.2f}.** \\$34.4B paid by customers for \\$15.9B of
+  GSEP capital, 2022-2039 (DPU GSEP Working Group minutes, Oct 20, 2023).
+- **Heat pump cost: \\$22,000 per home.** MassCEC whole-home pilot average for existing homes, \\$21,479
+  ([MassCEC, 2020](https://www.masscec.com/blog/september-whole-home-heat-pump-pilot-update-still-time-apply));
+  a 2023 memo for MassDEP gives an average of \\$26,402, range \\$16,000-36,000
+  ([Sustainable Energy Advantage and Synapse](https://www.mass.gov/doc/memo-on-heating-technology-costs-and-emissions/download)).
+- **Geothermal cost: \\${round(GEO_COST_PER_CUSTOMER, -3):,.0f} per customer.** Eversource Framingham pilot, about \\$15M for
+  about 135 customers, including heat pumps in each building
+  ([GCN](https://gcn.com/massachusetts-pilot-connects-135-homes-shared/22333)). For comparison, National Grid's
+  canceled Lowell pilot was \\$15.6M for 31 customers, about \\${round(LOWELL_COST_USD / LOWELL_CUSTOMERS, -3):,.0f} each
+  ([Banker & Tradesman](https://bankerandtradesman.com/national-grid-pulls-plug-on-residential-geothermal-pilot-in-lowell/)).
+- **Chance an owner-occupant agrees: 80%.** About 80% of homeowners along the Framingham pilot route joined
+  ([Eversource](https://www.eversource.com/residential/save-money-energy/clean-energy-options/geothermal-energy/geothermal-pilot-reference-guide)),
+  with the conversion paid for, so likely optimistic.
+- **Years to arrange geothermal: 4.** Framingham was approved by DPU in October 2020 and connected its first
+  customers in 2024 (DPU GSEP Working Group minutes, Apr 12, 2023; pilot reports).
+- **Sealing cost: 25% of replacement.** Con Edison job, \\$400,000 instead of \\$1.5-1.8M
+  ([ULC Technologies](https://ulctechnologies.com/services/cisbot-robotic-cast-iron-joint-sealing/)); ENR reports
+  about 10% ([ENR](https://www.enr.com/articles/43945-joint-filling-robot-is-game-changer-for-gas-utilities)).
+- **Leak repair: about \\${REPAIR_PER_MILE_YEAR:,.0f} per mile a year.** About {NEW_LEAKS_PER_MILE:.1f} new leaks per
+  mile of leak-prone pipe a year × about \\${COST_PER_LEAK:,.0f} per repair (\\$18.5M for 9,077 open leaks), from
+  D.P.U. 25-GLR-01 and DPU's April 2025 GSEP orders.
+- **Discount rate: 3%.** Within federal guidance of 2% to 7% (OMB Circular A-4).
+- **Crew capacity: {int(default_crew)} miles a year.** Boston Gas planned {BOSTON_GAS_PLANNED_MILES_2025} miles in 2025
+  across its territory (D.P.U. 25-GLR-01) × Boston's share of its leak-prone main
+  ({flagged_total:,.0f} of {BOSTON_GAS_LEAK_PRONE_MILES:,} miles).
+- **Budget: \\${default_budget}M a year.** Crew capacity × cost per mile.
+- **Budget falling with the cap.** DPU's GSEP cap goes from 2.5% to 2% (2026) and 1.5% (2027 on) of revenue
+  (DPU GSEP orders, April 30, 2025).
+- **Share of streets flagged: 34%.** The leak-prone share of Boston Gas's mains (D.P.U. 25-GLR-01).
+
+**Assumptions** (no direct source; adjust to test them)
+- Chance a landlord agrees: 60%.
+- Years to arrange electrification: 3.
+- Years sealing adds before replacement: 20. Massachusetts counts repairs that add at least 10 years, and the
+  sealant is lab-tested to 50 years (ENR).
+- Heat pump lifespan: 18 years. Commonly cited ranges are 10-15 years, and 20-25 with good maintenance
+  ([EnergySage](https://www.energysage.com/heat-pumps/how-long-do-heat-pumps-last/)).
+- Life of new pipe and geothermal loops, and the default horizon: 60 years.
+- Highest-risk share fixed first: 10%.
+- Cost uncertainty: replace ±20%, seal ±40%, electrify ±30%, geothermal ±50%, wider where there is less real-world
+  cost data.
+""")
     st.divider()
     st.caption(f"Created by {CREATOR}")
 
@@ -1016,6 +1065,10 @@ When leak records are added, a gradient-boosting model replaces this score and i
   [Lowell pilot canceled, \\$15.6 million for 31 customers](https://bankerandtradesman.com/national-grid-pulls-plug-on-residential-geothermal-pilot-in-lowell/);
   [about 80% of homeowners along the Framingham route joined](https://www.eversource.com/residential/save-money-energy/clean-energy-options/geothermal-energy/geothermal-pilot-reference-guide).
 - Discount rate: OMB Circular A-4 (2% to 7%).
+- Heat pump cost: [MassCEC whole-home pilot (2020)](https://www.masscec.com/blog/september-whole-home-heat-pump-pilot-update-still-time-apply);
+  [memo for MassDEP by Sustainable Energy Advantage and Synapse (May 2023)](https://www.mass.gov/doc/memo-on-heating-technology-costs-and-emissions/download).
+- Heat pump lifespan: [EnergySage](https://www.energysage.com/heat-pumps/how-long-do-heat-pumps-last/) (10-15 years,
+  20-25 with good maintenance).
 - City of Boston open data: street segments (SAM), FY2026 property assessment, BERDO building energy reporting.
 - U.S. Census Bureau: ACS 5-year estimates and block group boundaries. MassGIS: 2020 Environmental Justice populations.
 
